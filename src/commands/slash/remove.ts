@@ -12,13 +12,16 @@ export default {
   async execute(interaction: ChatInputCommandInteraction): Promise<void> {
     if (!interaction.guild || !interaction.channel) return;
     const ticket = await getTicketByChannel(interaction.channel.id);
-    if (!ticket) { await interaction.reply({ embeds: [errorEmbed('Not a Ticket', '')], ephemeral: true }); return; }
+    if (!ticket) { await interaction.reply({ embeds: [errorEmbed('Not a Ticket', 'This is not an active ticket.')], ephemeral: true }); return; }
     const member = interaction.guild.members.cache.get(interaction.user.id) ?? await interaction.guild.members.fetch(interaction.user.id);
     if (!await isStaff(member)) { await interaction.reply({ embeds: [errorEmbed('No Permission', 'Staff only.')], ephemeral: true }); return; }
     const target = interaction.options.getUser('member', true);
-    if (target.id === ticket.opener_id) { await interaction.reply({ embeds: [errorEmbed('Cannot Remove', 'You cannot remove the ticket opener.')], ephemeral: true }); return; }
+    if (target.id === ticket.opener_id) {
+      await interaction.reply({ embeds: [errorEmbed('Cannot Remove', 'You cannot remove the ticket opener.')], ephemeral: true });
+      return;
+    }
     const channel = interaction.channel as TextChannel;
-    await channel.permissionOverwrites.delete(target.id);
+    await channel.permissionOverwrites.delete(target.id).catch(() => null);
     await removeMemberFromTicket(ticket.id, target.id);
     await logAction(ticket.id, interaction.user.id, 'member_removed', { user_id: target.id, username: target.username });
     await interaction.reply({ embeds: [successEmbed('Member Removed', `<@${target.id}> has been removed from this ticket.`)] });
@@ -32,11 +35,11 @@ export default {
     if (!ticket) { await message.reply({ embeds: [errorEmbed('Not a Ticket', '')] }); return; }
     const executor = message.guild.members.cache.get(message.author.id) ?? await message.guild.members.fetch(message.author.id);
     if (!await isStaff(executor)) { await message.reply({ embeds: [errorEmbed('No Permission', 'Staff only.')] }); return; }
-    if (userId === ticket.opener_id) { await message.reply({ embeds: [errorEmbed('Cannot Remove', 'Cannot remove the ticket opener.')] }); return; }
+    if (userId === ticket.opener_id) { await message.reply({ embeds: [errorEmbed('Cannot Remove', 'Cannot remove ticket opener.')] }); return; }
     const channel = message.channel as TextChannel;
-    await channel.permissionOverwrites.delete(userId);
+    await channel.permissionOverwrites.delete(userId).catch(() => null);
     await removeMemberFromTicket(ticket.id, userId);
     await logAction(ticket.id, message.author.id, 'member_removed', { user_id: userId });
-    await message.reply({ embeds: [successEmbed('Removed', `<@${userId}> removed from ticket.`)] });
+    await message.reply({ embeds: [successEmbed('Member Removed', `<@${userId}> removed from this ticket.`)] });
   },
 };

@@ -3,25 +3,25 @@ import { EmbedBuilder, Colors } from 'discord.js';
 export const TIXORA_COLOR = 0x5865F2;
 
 export function successEmbed(title: string, description?: string): EmbedBuilder {
-  const e = new EmbedBuilder().setColor(Colors.Green).setTitle(`✅ ${title}`);
+  const e = new EmbedBuilder().setColor(Colors.Green).setTitle(title);
   if (description) e.setDescription(description);
   return e.setTimestamp();
 }
 
 export function errorEmbed(title: string, description?: string): EmbedBuilder {
-  const e = new EmbedBuilder().setColor(Colors.Red).setTitle(`❌ ${title}`);
+  const e = new EmbedBuilder().setColor(Colors.Red).setTitle(title);
   if (description) e.setDescription(description);
   return e.setTimestamp();
 }
 
 export function warningEmbed(title: string, description?: string): EmbedBuilder {
-  const e = new EmbedBuilder().setColor(Colors.Yellow).setTitle(`⚠️ ${title}`);
+  const e = new EmbedBuilder().setColor(Colors.Yellow).setTitle(title);
   if (description) e.setDescription(description);
   return e.setTimestamp();
 }
 
 export function infoEmbed(title: string, description?: string): EmbedBuilder {
-  const e = new EmbedBuilder().setColor(TIXORA_COLOR).setTitle(`ℹ️ ${title}`);
+  const e = new EmbedBuilder().setColor(TIXORA_COLOR).setTitle(title);
   if (description) e.setDescription(description);
   return e.setTimestamp();
 }
