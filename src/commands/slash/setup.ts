@@ -1,33 +1,48 @@
-import { SlashCommandBuilder, type ChatInputCommandInteraction, type Message } from 'discord.js';
-import { ensureGuild, getPanelsForGuild } from '../../database/queries.js';
-import { canManage } from '../../utils/permissions.js';
-import { successEmbed, errorEmbed, infoEmbed } from '../../utils/embed.js';
+import { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, type ChatInputCommandInteraction, type Message } from 'discord.js';
+import { TIXORA_COLOR } from '../../utils/embed.js';
 
-const DASHBOARD_BASE_URL = process.env.DASHBOARD_BASE_URL ?? 'https://tixora.app';
+const DASHBOARD_URL = process.env.DASHBOARD_BASE_URL ?? 'https://tixorabot.up.railway.app';
 
 export default {
   data: new SlashCommandBuilder()
     .setName('setup')
-    .setDescription('Setup Tixora for this server — opens the dashboard link'),
+    .setDescription('Get the link to your Tixora dashboard to configure this server')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
 
   async execute(interaction: ChatInputCommandInteraction): Promise<void> {
-    if (!interaction.guild) return;
-    const member = interaction.guild.members.cache.get(interaction.user.id) ?? await interaction.guild.members.fetch(interaction.user.id);
-    if (!await canManage(member)) { await interaction.reply({ embeds: [errorEmbed('No Permission', 'You need Manage Guild to run setup.')], ephemeral: true }); return; }
-    await ensureGuild(interaction.guild.id);
-    const dashUrl = `${DASHBOARD_BASE_URL}/dashboard/${interaction.guild.id}`;
-    await interaction.reply({
-      embeds: [infoEmbed('Setup Tixora', `Configure panels, staff roles, auto-close, and more from the dashboard:\n\n**[Open Dashboard](${dashUrl})**\n\nAll changes take effect immediately.`)],
-      ephemeral: true,
-    });
+    const embed = new EmbedBuilder()
+      .setColor(TIXORA_COLOR)
+      .setTitle('Tixora Dashboard')
+      .setDescription(
+        `Configure Tixora for **${interaction.guild?.name}** from the web dashboard.\n\n` +
+        `**[Open Dashboard →](${DASHBOARD_URL}/dashboard/${interaction.guildId})**\n\n` +
+        '**What you can do from the dashboard:**\n' +
+        '• Create ticket panels and customise button labels/colors\n' +
+        '• Add ticket categories (routes tickets to different channels)\n' +
+        '• Set up ticket forms (ask questions before opening)\n' +
+        '• Configure staff roles, priority levels, and blacklist\n' +
+        '• Set log channel and transcript channel\n' +
+        '• View analytics, transcripts, and ratings\n' +
+        '• Manage canned replies and knowledge base\n' +
+        '• Browse and import panel templates from the community',
+      )
+      .addFields(
+        { name: 'Dashboard URL', value: `${DASHBOARD_URL}/dashboard/${interaction.guildId}`, inline: false },
+        { name: 'Quick guide', value: `1. Sign in with Discord\n2. Select **${interaction.guild?.name ?? 'your server'}**\n3. Go to **Panels** and create your first ticket panel\n4. Use \`/help\` to see all available commands`, inline: false },
+      )
+      .setFooter({ text: 'Tixora — Professional Discord Ticket Bot' })
+      .setTimestamp();
+
+    await interaction.reply({ embeds: [embed], ephemeral: true });
   },
 
   async prefixExecute(message: Message): Promise<void> {
     if (!message.guild) return;
-    const member = message.guild.members.cache.get(message.author.id) ?? await message.guild.members.fetch(message.author.id);
-    if (!await canManage(member)) { await message.reply({ embeds: [errorEmbed('No Permission', 'Manage Guild required.')] }); return; }
-    await ensureGuild(message.guild.id);
-    const dashUrl = `${DASHBOARD_BASE_URL}/dashboard/${message.guild.id}`;
-    await message.reply({ embeds: [infoEmbed('Setup Tixora', `Configure Tixora at: ${dashUrl}`)] });
+    const embed = new EmbedBuilder()
+      .setColor(TIXORA_COLOR)
+      .setTitle('Tixora Dashboard')
+      .setDescription(`Configure this server: ${DASHBOARD_URL}/dashboard/${message.guildId}\n\nSign in with Discord, select your server, and create your first panel.`)
+      .setTimestamp();
+    await message.reply({ embeds: [embed] });
   },
 };

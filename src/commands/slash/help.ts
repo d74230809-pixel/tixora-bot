@@ -3,89 +3,82 @@ import { TIXORA_COLOR } from '../../utils/embed.js';
 
 const categories = [
   {
-    name: 'Ticket Management',
-    emoji: '🎫',
-    commands: [
-      { name: '/close [reason]', desc: 'Close the current ticket (modal if no reason given)', type: 'Ticket' },
-      { name: '/reopen', desc: 'Reopen a closed ticket', type: 'Ticket' },
-      { name: '/claim', desc: 'Claim ownership of this ticket', type: 'Ticket' },
-      { name: '/unclaim', desc: 'Release your claim on this ticket', type: 'Ticket' },
-      { name: '/add <member>', desc: 'Add a member to this ticket', type: 'Ticket' },
-      { name: '/remove <member>', desc: 'Remove a member from this ticket', type: 'Ticket' },
-      { name: '/ticket', desc: 'Show ticket details, status, and history', type: 'Ticket' },
-    ],
+    name: 'Ticket Actions',
+    value: [
+      '`/close [reason]` — Close this ticket with an optional reason (or via popup modal)',
+      '`/reopen` — Reopen a closed ticket and restore user access',
+      '`/claim` — Claim ownership of this ticket — shows you are handling it',
+      '`/unclaim` — Release your claim so another staff can take it',
+      '`/add <@user>` — Grant a user access to view and reply in this ticket',
+      '`/remove <@user>` — Remove a user\'s access from this ticket',
+      '`/ticket` — View full ticket details: status, age, history, notes',
+    ].join('\n'),
   },
   {
-    name: 'Organization',
-    emoji: '📋',
-    commands: [
-      { name: '/tag add <name>', desc: 'Add a label/tag to this ticket', type: 'Staff' },
-      { name: '/tag remove <name>', desc: 'Remove a tag from this ticket', type: 'Staff' },
-      { name: '/priority <level>', desc: 'Set the priority level (low/medium/high/urgent)', type: 'Staff' },
-      { name: '/note <content>', desc: 'Add a private staff-only note (invisible to user)', type: 'Staff' },
-      { name: '/canned <name>', desc: 'Send a saved canned reply template', type: 'Staff' },
-    ],
+    name: 'Organization & Tools',
+    value: [
+      '`/priority <level>` — Set ticket priority (use a name from your configured levels, or `clear`)',
+      '`/tag add <name>` — Add a searchable label to this ticket',
+      '`/tag remove <name>` — Remove a label from this ticket',
+      '`/note <text>` — Add a private staff note (auto-deletes in 30s, saved to dashboard)',
+      '`/canned <name>` — Send a saved canned reply — saves time on common responses',
+    ].join('\n'),
   },
   {
-    name: 'Analytics & Monitoring',
-    emoji: '📊',
-    commands: [
-      { name: '/stats', desc: 'Server ticket statistics: total, open, closed, avg rating', type: 'Staff' },
-      { name: '/sla', desc: 'Check SLA breach status for the current ticket', type: 'Staff' },
-      { name: '/ping', desc: 'Check bot latency and connection health', type: 'All' },
-    ],
+    name: 'Stats & Monitoring',
+    value: [
+      '`/stats` — Server-wide ticket stats: open, closed, average rating, claimed/unclaimed',
+      '`/sla` — Check if this ticket has breached your configured response/resolution targets',
+      '`/ping` — Check bot latency and WebSocket health',
+    ].join('\n'),
   },
   {
     name: 'Administration',
-    emoji: '⚙️',
-    commands: [
-      { name: '/setup', desc: 'Open the Tixora dashboard for full server configuration', type: 'Admin' },
-      { name: '/blacklist add <user>', desc: 'Block a user from opening tickets', type: 'Admin' },
-      { name: '/blacklist remove <user>', desc: 'Unblock a blacklisted user', type: 'Admin' },
-    ],
+    value: [
+      '`/setup` — Opens a link to your Tixora dashboard for full server configuration',
+      '`/blacklist add <@user> [reason]` — Block a user from opening tickets',
+      '`/blacklist remove <@user>` — Unblock a blacklisted user',
+      '`/blacklist check <@user>` — Check whether a user is blocked',
+    ].join('\n'),
+  },
+  {
+    name: 'Prefix Commands (T! prefix)',
+    value: [
+      'Every command above also works as a prefix command: `T!close`, `T!claim`, `T!stats`, etc.',
+      'The prefix is configurable per-server from the dashboard (default: `T!`)',
+      'Prefix: `T!help`, `T!close [reason]`, `T!claim`, `T!unclaim`, `T!add @user`, `T!remove @user`',
+      '`T!note <text>`, `T!canned <name>`, `T!priority <level>`, `T!stats`, `T!ping`, `T!sla`',
+    ].join('\n'),
   },
 ];
+
+function buildEmbed(): EmbedBuilder {
+  const embed = new EmbedBuilder()
+    .setColor(TIXORA_COLOR)
+    .setTitle('Tixora — Command Reference')
+    .setDescription(
+      '**Tixora** is a professional Discord ticket bot.\nAll slash commands work inside any ticket channel. Staff commands require a configured staff role.\n\u200b',
+    )
+    .setFooter({ text: 'Tixora Ticket Bot • Dashboard: /setup • All commands work as /slash and T!prefix' })
+    .setTimestamp();
+
+  for (const cat of categories) {
+    embed.addFields({ name: `▸ ${cat.name}`, value: cat.value });
+  }
+  return embed;
+}
 
 export default {
   data: new SlashCommandBuilder()
     .setName('help')
-    .setDescription('Show all Tixora commands and their descriptions'),
+    .setDescription('Show all Tixora commands — visible to everyone in the channel'),
 
   async execute(interaction: ChatInputCommandInteraction): Promise<void> {
-    const embed = new EmbedBuilder()
-      .setColor(TIXORA_COLOR)
-      .setTitle('Tixora — Command Reference')
-      .setDescription(
-        'All commands work as `/slash` and `T!prefix` variants.\nPrefix commands: `T!close`, `T!claim`, `T!stats`, etc.\n\n' +
-        '**Permission levels:** `All` = anyone | `Staff` = staff roles | `Admin` = Manage Server',
-      )
-      .setFooter({ text: 'Tixora Ticket Bot | Full docs at your dashboard' })
-      .setTimestamp();
-
-    for (const cat of categories) {
-      const lines = cat.commands.map(c => `\`${c.name}\` — ${c.desc}`).join('\n');
-      embed.addFields({ name: `${cat.emoji} ${cat.name}`, value: lines });
-    }
-
-    await interaction.reply({ embeds: [embed], ephemeral: true });
+    // NOT ephemeral — visible to everyone
+    await interaction.reply({ embeds: [buildEmbed()] });
   },
 
   async prefixExecute(message: Message): Promise<void> {
-    const embed = new EmbedBuilder()
-      .setColor(TIXORA_COLOR)
-      .setTitle('Tixora — Command Reference')
-      .setDescription(
-        'Use `/slash` or `T!prefix` for any command below.\n\n' +
-        '**Quick start:** `T!close`, `T!claim`, `T!stats`, `T!ping`',
-      )
-      .setFooter({ text: 'Full list: /help | Dashboard: /setup' })
-      .setTimestamp();
-
-    for (const cat of categories) {
-      const lines = cat.commands.map(c => `**${c.name}** — ${c.desc}`).join('\n');
-      embed.addFields({ name: `${cat.emoji} ${cat.name}`, value: lines });
-    }
-
-    await message.reply({ embeds: [embed] });
+    await message.reply({ embeds: [buildEmbed()] });
   },
 };
