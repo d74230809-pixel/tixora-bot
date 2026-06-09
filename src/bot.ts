@@ -1,64 +1,52 @@
 import {
-    Client, GatewayIntentBits, Partials,
-    type ChatInputCommandInteraction, type Message,
-  } from 'discord.js';
-  import { readdirSync } from 'fs';
-  import { join } from 'path';
-  import { pathToFileURL } from 'url';
-  import onReady from './events/ready.js';
-  import onInteraction from './events/interactionCreate.js';
-  import onMessage from './events/messageCreate.js';
+  Client, GatewayIntentBits, Partials,
+  type ChatInputCommandInteraction, type Message,
+} from 'discord.js';
+import onReady from './events/ready.js';
+import onInteraction from './events/interactionCreate.js';
+import onMessage from './events/messageCreate.js';
+import { allCommands } from './commands/all.js';
 
-  export interface SlashCommand {
-    data: { name: string; toJSON(): unknown };
-    execute(interaction: ChatInputCommandInteraction): Promise<void>;
-    prefixExecute?(message: Message, args: string[]): Promise<void>;
-  }
+export interface SlashCommand {
+  data: { name: string; toJSON(): any };
+  execute(interaction: ChatInputCommandInteraction): Promise<void>;
+  prefixExecute?(message: Message, args: string[]): Promise<void>;
+}
 
-  export const client = new Client({
-    intents: [
-      GatewayIntentBits.Guilds,
-      GatewayIntentBits.GuildMessages,
-      GatewayIntentBits.MessageContent,
-      GatewayIntentBits.GuildMembers,
-      GatewayIntentBits.DirectMessages,
-    ],
-    partials: [Partials.Channel, Partials.Message],
-  });
+export const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.DirectMessages,
+  ],
+  partials: [Partials.Channel, Partials.Message],
+});
 
-  const commands = new Map<string, SlashCommand>();
+const commands = new Map<string, SlashCommand>();
 
-  export async function loadCommands(): Promise<void> {
-    const slashDir = join(__dirname, 'commands', 'slash');
-
-    try {
-      const files = readdirSync(slashDir).filter(f => f.endsWith('.js'));
-      for (const file of files) {
-        const mod = await import(pathToFileURL(join(slashDir, file)).href);
-        const command: SlashCommand = mod.default ?? mod;
-        if (command?.data?.name) {
-          commands.set(command.data.name, command);
-          console.log(`[Commands] Loaded: ${command.data.name}`);
-        }
-      }
-    } catch (err) {
-      console.error('[Commands] Error loading commands:', err);
+export async function loadCommands(): Promise<void> {
+  for (const command of allCommands) {
+    if (command?.data?.name) {
+      commands.set(command.data.name, command);
+      console.log(`[Commands] Loaded: ${command.data.name}`);
     }
   }
+}
 
-  export function registerListeners(): void {
-    client.once('ready', () => onReady(client));
+export function registerListeners(): void {
+  client.once('ready', () => onReady(client));
 
-    client.on('interactionCreate', (interaction) =>
-      onInteraction(interaction, commands),
-    );
+  client.on('interactionCreate', (interaction) =>
+    onInteraction(interaction, commands),
+  );
 
-    client.on('messageCreate', (message) =>
-      onMessage(message, client, commands),
-    );
-  }
+  client.on('messageCreate', (message) =>
+    onMessage(message, client, commands),
+  );
+}
 
-  export function getCommands(): Map<string, SlashCommand> {
-    return commands;
-  }
-  
+export function getCommands(): Map<string, SlashCommand> {
+  return commands;
+}
