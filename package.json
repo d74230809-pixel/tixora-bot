@@ -13,12 +13,11 @@
     "@supabase/supabase-js": "^2.45.0",
     "discord.js": "^14.16.3",
     "dotenv": "^16.4.5",
-    "node-fetch": "^3.3.2"
-  },
-  "devDependencies": {
-    "@types/node": "^22.0.0",
     "esbuild": "^0.24.0",
     "ts-node": "^10.9.2",
     "typescript": "^5.5.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0"
   }
 }
