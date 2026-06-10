@@ -176,10 +176,15 @@ async function handleButton(interaction: ButtonInteraction): Promise<void> {
   // ── Close button ─────────────────────────────────────────────────────────
   if (action === 'ticket_close') {
     const ticketId = rest[0];
-    await interaction.deferReply({ ephemeral: true });
+    
+    // Check permission BEFORE showing modal
+    const ticket = await getTicketById(ticketId);
     const staffCheck = await isStaff(member);
-    if (!staffCheck && interaction.user.id !== (await getTicketById(ticketId))?.opener_id) {
-      await interaction.editReply({ embeds: [errorEmbed('No Permission', 'Only staff or the ticket opener can close this ticket.')] });
+    if (!staffCheck && interaction.user.id !== ticket?.opener_id) {
+      await interaction.reply({ 
+        embeds: [errorEmbed('No Permission', 'Only staff or the ticket opener can close this ticket.')],
+        ephemeral: true 
+      });
       return;
     }
 
@@ -196,7 +201,8 @@ async function handleButton(interaction: ButtonInteraction): Promise<void> {
             .setMaxLength(200),
         ),
       );
-    await interaction.deleteReply();
+    
+    // IMPORTANT: showModal MUST be called without prior deferReply/reply
     await interaction.showModal(modal);
     return;
   }
