@@ -5,7 +5,7 @@ import {
 } from 'discord.js';
 import {
   createTicket, closeTicket, logAction, saveTranscript,
-  saveAiSummary, getGuild, getCategoryById, getPriorityById,
+  saveAiSummary, getGuild, getCategoryById, getPriorityById, getFormById,
 } from '../database/queries.js';
 import { fetchAllMessages } from './transcript.js';
 import { generateTicketSummary } from './ai.js';
@@ -18,8 +18,9 @@ export async function openTicket(options: {
   guild: DiscordGuild;
   member: GuildMember;
   categoryId?: string | null;
+  formAnswers?: Record<string, string>;
 }): Promise<TextChannel> {
-  const { guild, member, categoryId } = options;
+  const { guild, member, categoryId, formAnswers } = options;
 
   const category = categoryId ? await getCategoryById(categoryId) : null;
   const guildConfig = await getGuild(guild.id);
@@ -54,16 +55,16 @@ export async function openTicket(options: {
     ],
   }) as TextChannel;
 
-  // Create ticket record in DB
+  // Create ticket record in DB (with form answers if present)
   const ticket = await createTicket({
     guild_id: guild.id,
     channel_id: channel.id,
     opener_id: member.id,
     category_id: categoryId ?? null,
     priority_id: category?.default_priority_id ?? null,
+    form_answers_json: formAnswers ?? null,
   });
 
-  // Log action
   await logAction(ticket.id, member.id, 'opened', { category: category?.name ?? 'General' });
 
   // Add staff roles to channel permissions
@@ -77,7 +78,7 @@ export async function openTicket(options: {
     }
   }
 
-  // Send opening embed
+  // Build opening embed
   const priorityData = ticket.priority_id ? await getPriorityById(ticket.priority_id) : null;
   const embed = ticketEmbed({
     title: `Ticket #${channel.name}`,
@@ -97,6 +98,40 @@ export async function openTicket(options: {
   );
 
   await channel.send({ content: `<@${member.id}>`, embeds: [embed], components: [row] });
+
+  // If form answers provided, send them as a follow-up embed in the ticket
+  if (formAnswers && Object.keys(formAnswers).length > 0) {
+    // Get form question labels for display
+    let questionLabels: Record<string, string> = {};
+    try {
+      const formId = category?.form_id;
+      if (formId) {
+        const form = await getFormById(formId);
+        if (form) {
+          for (const q of form.questions_json as { id: string; label: string }[]) {
+            questionLabels[q.id] = q.label;
+          }
+        }
+      }
+    } catch { /* ignore */ }
+
+    const answersEmbed = new EmbedBuilder()
+      .setColor(0x5865F2)
+      .setTitle('📋 Form Responses')
+      .setDescription('The user submitted the following information:')
+      .addFields(
+        Object.entries(formAnswers)
+          .filter(([, v]) => v.trim())
+          .map(([id, value]) => ({
+            name: questionLabels[id] ?? id,
+            value: value.slice(0, 1024),
+            inline: false,
+          }))
+      )
+      .setTimestamp();
+
+    await channel.send({ embeds: [answersEmbed] });
+  }
 
   return channel;
 }
@@ -131,13 +166,11 @@ export async function buildAndSendTranscript(ticket: Ticket, channel: TextChanne
       .setTimestamp()
       .setFooter({ text: 'Powered by Tixora' });
 
-    // Send to log channel
     if (guildConfig?.log_channel_id) {
       const logChannel = channel.guild.channels.cache.get(guildConfig.log_channel_id) as TextChannel | undefined;
       if (logChannel) await logChannel.send({ embeds: [embed] });
     }
 
-    // Send to transcript channel (if different)
     if (guildConfig?.transcript_channel_id && guildConfig.transcript_channel_id !== guildConfig.log_channel_id) {
       const transcriptChannel = channel.guild.channels.cache.get(guildConfig.transcript_channel_id) as TextChannel | undefined;
       if (transcriptChannel) await transcriptChannel.send({ embeds: [embed] });

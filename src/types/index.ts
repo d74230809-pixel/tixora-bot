@@ -69,6 +69,7 @@ export interface PanelButton {
   emoji?: string;
   style: 1 | 2 | 3 | 4;
   category_id: string | null;
+  form_id?: string | null;
 }
 
 export interface Ticket {
@@ -81,6 +82,7 @@ export interface Ticket {
   status: 'open' | 'closed' | 'deleted';
   claimed_by: string | null;
   tags_json: string[];
+  form_answers_json: Record<string, string> | null;
   opened_at: string;
   closed_at: string | null;
   close_reason: string | null;

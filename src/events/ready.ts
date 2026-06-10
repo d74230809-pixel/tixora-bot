@@ -53,7 +53,6 @@ function formatUptime(ms: number): string {
 export async function postCrashAlert(error: Error): Promise<void> {
   const statsChannelId = process.env.STATS_CHANNEL_ID;
   if (!statsChannelId) return;
-  // We can't use the client here so we call Discord API directly
   const token = process.env.DISCORD_TOKEN;
   if (!token) return;
   const embed = {
@@ -68,6 +67,39 @@ export async function postCrashAlert(error: Error): Promise<void> {
     headers: { Authorization: `Bot ${token}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ embeds: [embed] }),
   }).catch(() => {});
+}
+
+// Store guild name/icon in the DB for all guilds the bot is in
+async function syncGuildInfo(client: Client): Promise<void> {
+  const guilds = client.guilds.cache;
+  if (guilds.size === 0) return;
+
+  const upserts = Array.from(guilds.values()).map(g => ({
+    guild_id: g.id,
+    name: g.name,
+    icon: g.icon ?? null,
+    member_count: g.memberCount ?? null,
+    owner_id: g.ownerId ?? null,
+    prefix: 'T!',
+    premium: false,
+  }));
+
+  // Upsert in batches of 20 to avoid rate limits
+  const batchSize = 20;
+  for (let i = 0; i < upserts.length; i += batchSize) {
+    const batch = upserts.slice(i, i + batchSize);
+    const { error } = await db.from('guilds').upsert(batch, { onConflict: 'guild_id', ignoreDuplicates: false });
+    if (error) console.error('[Tixora] Failed to sync guild batch:', error.message);
+    // Update name/icon without overwriting premium status
+    for (const g of batch) {
+      await db.from('guilds')
+        .update({ name: g.name, icon: g.icon, member_count: g.member_count, owner_id: g.owner_id })
+        .eq('guild_id', g.guild_id)
+        .catch(() => {}); // ignore individual errors
+    }
+  }
+
+  console.log(`[Tixora] Synced ${guilds.size} guild names/icons to DB`);
 }
 
 export default async function onReady(client: Client): Promise<void> {
@@ -91,6 +123,9 @@ export default async function onReady(client: Client): Promise<void> {
   }
 
   startAutoCloseJob(client);
+
+  // Sync guild info to DB after a short delay (let guild cache populate)
+  setTimeout(() => syncGuildInfo(client), 5_000);
 
   // Post initial status and then every 5 minutes
   setTimeout(() => postStatusUpdate(client), 10_000);

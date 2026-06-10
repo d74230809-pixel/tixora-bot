@@ -94,6 +94,7 @@ export async function createTicket(data: {
   opener_id: string;
   category_id?: string | null;
   priority_id?: string | null;
+  form_answers_json?: Record<string, string> | null;
 }): Promise<Ticket> {
   const { data: ticket, error } = await db.from('tickets').insert({
     guild_id: data.guild_id,
@@ -101,6 +102,7 @@ export async function createTicket(data: {
     opener_id: data.opener_id,
     category_id: data.category_id ?? null,
     priority_id: data.priority_id ?? null,
+    form_answers_json: data.form_answers_json ?? null,
     status: 'open',
     last_activity_at: new Date().toISOString(),
   }).select().single();

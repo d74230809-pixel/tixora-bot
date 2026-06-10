@@ -6,12 +6,47 @@ import {
 } from 'discord.js';
 import type { SlashCommand } from '../bot.js';
 import {
-  getTicketByChannel, getTicketById, claimTicket, unclaimTicket,
+  getTicketByChannel, getTicketById, claimTicket,
   logAction, ensureGuild, isBlacklisted, saveRating,
+  getCategoryById, getFormById,
 } from '../database/queries.js';
 import { openTicket, processTicketClose, buildAndSendTranscript } from '../services/ticket.js';
 import { isStaff } from '../utils/permissions.js';
 import { successEmbed, errorEmbed, infoEmbed } from '../utils/embed.js';
+import type { Form } from '../types/index.js';
+
+// Build a Discord modal from a form's questions
+function buildFormModal(form: Form, categoryId: string | null, directFormId?: string): ModalBuilder {
+  const customId = `form_ticket_submit:${categoryId ?? 'null'}:${directFormId ?? 'null'}`;
+  const modal = new ModalBuilder()
+    .setCustomId(customId)
+    .setTitle(form.name.slice(0, 45));
+
+  const questions = (form.questions_json as {
+    id: string;
+    label: string;
+    type: 'short' | 'paragraph' | 'dropdown';
+    required?: boolean;
+    placeholder?: string;
+  }[]).slice(0, 5); // Discord modals support max 5 components
+
+  for (const q of questions) {
+    const input = new TextInputBuilder()
+      .setCustomId(q.id)
+      .setLabel(q.label.slice(0, 45))
+      .setStyle(q.type === 'paragraph' ? TextInputStyle.Paragraph : TextInputStyle.Short)
+      .setRequired(q.required ?? false)
+      .setMaxLength(q.type === 'paragraph' ? 1000 : 250);
+
+    if (q.placeholder) {
+      input.setPlaceholder(q.placeholder.slice(0, 100));
+    }
+
+    modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(input));
+  }
+
+  return modal;
+}
 
 export default async function onInteraction(
   interaction: Interaction,
@@ -52,13 +87,42 @@ async function handleButton(interaction: ButtonInteraction): Promise<void> {
   const member = interaction.guild.members.cache.get(interaction.user.id)
     ?? await interaction.guild.members.fetch(interaction.user.id);
 
-  // Panel button — open ticket
+  // ── Panel button — open ticket (possibly with a form modal) ──────────────
   if (action === 'panel_open') {
-    const categoryId = rest[0] ?? null;
-    await interaction.deferReply({ ephemeral: true });
+    const categoryId = rest[0] && rest[0] !== 'null' ? rest[0] : null;
     await ensureGuild(interaction.guild.id);
 
-    // Blacklist check
+    // Blacklist check (need to defer first for this, but show modal before deferring if form exists)
+    // Check category form BEFORE deferring so we can show a modal
+    if (categoryId) {
+      try {
+        const category = await getCategoryById(categoryId);
+        if (category?.form_id) {
+          const form = await getFormById(category.form_id);
+          if (form && (form.questions_json as unknown[]).length > 0) {
+            // Check blacklist first (without deferring — we can use ephemeral reply)
+            const banned = await isBlacklisted(interaction.guild.id, interaction.user.id);
+            if (banned) {
+              await interaction.reply({
+                embeds: [errorEmbed('Blacklisted', 'You are not allowed to open tickets in this server.')],
+                ephemeral: true,
+              });
+              return;
+            }
+            // Show form modal
+            const modal = buildFormModal(form, categoryId);
+            await interaction.showModal(modal);
+            return;
+          }
+        }
+      } catch (err) {
+        console.error('[Button:panel_open] Error checking form:', err);
+      }
+    }
+
+    // No form — open ticket directly
+    await interaction.deferReply({ ephemeral: true });
+
     const banned = await isBlacklisted(interaction.guild.id, interaction.user.id);
     if (banned) {
       await interaction.editReply({ embeds: [errorEmbed('Blacklisted', 'You are not allowed to open tickets in this server.')] });
@@ -69,13 +133,46 @@ async function handleButton(interaction: ButtonInteraction): Promise<void> {
       const channel = await openTicket({ guild: interaction.guild, member, categoryId });
       await interaction.editReply({ embeds: [successEmbed('Ticket Created', `Your ticket has been created: <#${channel.id}>`)] });
     } catch (err) {
-      console.error('[Button:panel_open] Error:', err);
+      console.error('[Button:panel_open] Error opening ticket:', err);
       await interaction.editReply({ embeds: [errorEmbed('Error', 'Failed to create ticket. Please try again.')] });
     }
     return;
   }
 
-  // Close button
+  // ── Direct form button (panel_form:formId) ───────────────────────────────
+  if (action === 'panel_form') {
+    const formId = rest[0];
+    if (!formId) return;
+    await ensureGuild(interaction.guild.id);
+
+    const banned = await isBlacklisted(interaction.guild.id, interaction.user.id);
+    if (banned) {
+      await interaction.reply({
+        embeds: [errorEmbed('Blacklisted', 'You are not allowed to open tickets in this server.')],
+        ephemeral: true,
+      });
+      return;
+    }
+
+    try {
+      const form = await getFormById(formId);
+      if (!form || (form.questions_json as unknown[]).length === 0) {
+        // No form or empty form — open ticket directly
+        await interaction.deferReply({ ephemeral: true });
+        const channel = await openTicket({ guild: interaction.guild, member, categoryId: null });
+        await interaction.editReply({ embeds: [successEmbed('Ticket Created', `Your ticket: <#${channel.id}>`)] });
+        return;
+      }
+      const modal = buildFormModal(form, null, formId);
+      await interaction.showModal(modal);
+    } catch (err) {
+      console.error('[Button:panel_form] Error:', err);
+      await interaction.reply({ embeds: [errorEmbed('Error', 'Failed to load form.')], ephemeral: true });
+    }
+    return;
+  }
+
+  // ── Close button ─────────────────────────────────────────────────────────
   if (action === 'ticket_close') {
     const ticketId = rest[0];
     await interaction.deferReply({ ephemeral: true });
@@ -103,7 +200,7 @@ async function handleButton(interaction: ButtonInteraction): Promise<void> {
     return;
   }
 
-  // Claim button
+  // ── Claim button ─────────────────────────────────────────────────────────
   if (action === 'ticket_claim') {
     const ticketId = rest[0];
     await interaction.deferReply({ ephemeral: true });
@@ -121,7 +218,7 @@ async function handleButton(interaction: ButtonInteraction): Promise<void> {
     return;
   }
 
-  // Rating buttons
+  // ── Rating buttons ───────────────────────────────────────────────────────
   if (action === 'rate') {
     const [ticketId, ratingStr] = rest;
     const rating = parseInt(ratingStr, 10);
@@ -130,7 +227,6 @@ async function handleButton(interaction: ButtonInteraction): Promise<void> {
     if (!interaction.guildId) return;
     await saveRating(ticketId, interaction.guildId, interaction.user.id, rating);
     await interaction.editReply({ embeds: [successEmbed('Thank you!', `You rated this ticket **${rating}/5 ⭐**`)] });
-    // Disable the rating row
     if (interaction.message) {
       await interaction.message.edit({ components: [] }).catch(() => null);
     }
@@ -141,6 +237,42 @@ async function handleButton(interaction: ButtonInteraction): Promise<void> {
 async function handleModal(interaction: ModalSubmitInteraction): Promise<void> {
   const [action, ...rest] = interaction.customId.split(':');
 
+  // ── Form ticket submit (from panel_open or panel_form with a form) ────────
+  if (action === 'form_ticket_submit') {
+    const categoryId = rest[0] !== 'null' ? rest[0] : null;
+
+    if (!interaction.guild || !interaction.member) return;
+    const member = interaction.guild.members.cache.get(interaction.user.id)
+      ?? await interaction.guild.members.fetch(interaction.user.id);
+
+    await interaction.deferReply({ ephemeral: true });
+
+    // Extract form answers from modal fields
+    const formAnswers: Record<string, string> = {};
+    for (const [fieldId, component] of interaction.fields.fields) {
+      formAnswers[fieldId] = component.value;
+    }
+
+    try {
+      const channel = await openTicket({
+        guild: interaction.guild,
+        member,
+        categoryId,
+        formAnswers,
+      });
+      await interaction.editReply({
+        embeds: [successEmbed('Ticket Created', `Your ticket has been created: <#${channel.id}>`)],
+      });
+    } catch (err) {
+      console.error('[Modal:form_ticket_submit] Error:', err);
+      await interaction.editReply({
+        embeds: [errorEmbed('Error', 'Failed to create your ticket. Please try again.')],
+      });
+    }
+    return;
+  }
+
+  // ── Close modal ───────────────────────────────────────────────────────────
   if (action === 'close_modal') {
     const ticketId = rest[0];
     const reason = interaction.fields.getTextInputValue('reason') || undefined;
@@ -151,7 +283,6 @@ async function handleModal(interaction: ModalSubmitInteraction): Promise<void> {
       return;
     }
 
-    // Find ticket by channel
     const ticket = await getTicketByChannel(interaction.channel.id) ?? await getTicketById(ticketId);
     if (!ticket) {
       await interaction.editReply({ embeds: [errorEmbed('Not Found', 'Ticket not found or already closed.')] });
@@ -164,7 +295,7 @@ async function handleModal(interaction: ModalSubmitInteraction): Promise<void> {
     const textChannel = interaction.channel as import('discord.js').TextChannel;
     await buildAndSendTranscript(ticket, textChannel);
 
-    // Send rating prompt in ticket channel
+    // Rating prompt
     const ratingRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
       [1, 2, 3, 4, 5].map(n =>
         new ButtonBuilder()
@@ -181,7 +312,8 @@ async function handleModal(interaction: ModalSubmitInteraction): Promise<void> {
     // Lock channel
     await textChannel.permissionOverwrites.edit(interaction.guild!.roles.everyone, { SendMessages: false, ViewChannel: false });
     await textChannel.permissionOverwrites.edit(ticket.opener_id, { SendMessages: false, ViewChannel: true });
-
-    await textChannel.send({ embeds: [infoEmbed('Ticket Closed', `This ticket has been closed by <@${interaction.user.id}>${reason ? ` — Reason: ${reason}` : '.'}`)] });
+    await textChannel.send({
+      embeds: [infoEmbed('Ticket Closed', `Closed by <@${interaction.user.id}>${reason ? ` — ${reason}` : '.'}`)],
+    });
   }
 }
