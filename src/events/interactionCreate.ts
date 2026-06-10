@@ -123,6 +123,7 @@ async function handleButton(interaction: ButtonInteraction): Promise<void> {
     // No form — open ticket directly
     await interaction.deferReply({ ephemeral: true });
 
+    // Check blacklist first
     const banned = await isBlacklisted(interaction.guild.id, interaction.user.id);
     if (banned) {
       await interaction.editReply({ embeds: [errorEmbed('Blacklisted', 'You are not allowed to open tickets in this server.')] });
@@ -245,6 +246,7 @@ async function handleModal(interaction: ModalSubmitInteraction): Promise<void> {
     const member = interaction.guild.members.cache.get(interaction.user.id)
       ?? await interaction.guild.members.fetch(interaction.user.id);
 
+    // Defer immediately to avoid interaction timeout
     await interaction.deferReply({ ephemeral: true });
 
     // Extract form answers from modal fields

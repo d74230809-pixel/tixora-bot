@@ -25,14 +25,37 @@ export async function openTicket(options: {
   const category = categoryId ? await getCategoryById(categoryId) : null;
   const guildConfig = await getGuild(guild.id);
 
+  // 1. Enforce max_open_per_user if set
+  if (category?.max_open_per_user) {
+    const { data: openTickets } = await (await import('../database/client.js')).getSupabase()
+      .from('tickets')
+      .select('id')
+      .eq('guild_id', guild.id)
+      .eq('opener_id', member.id)
+      .eq('category_id', categoryId)
+      .eq('status', 'open');
+    
+    if (openTickets && openTickets.length >= category.max_open_per_user) {
+      throw new Error(`You already have ${openTickets.length} open ticket(s) in this category. Please close them before opening a new one.`);
+    }
+  }
+
   // Find or create ticket category channel
   let parentId: string | undefined;
   if (category?.target_channel_id) {
     parentId = category.target_channel_id;
   }
 
-  // Create the ticket channel
-  const channelName = `ticket-${member.user.username.toLowerCase().replace(/[^a-z0-9]/g, '')}-${Date.now().toString(36)}`;
+  // 2. Custom Naming Scheme
+  let channelName = `ticket-${member.user.username.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
+  if (category?.naming_scheme) {
+    channelName = category.naming_scheme
+      .replace('{username}', member.user.username.toLowerCase().replace(/[^a-z0-9]/g, ''))
+      .replace('{id}', member.id)
+      .slice(0, 100);
+  } else {
+    channelName += `-${Date.now().toString(36)}`;
+  }
 
   const channel = await guild.channels.create({
     name: channelName,
@@ -91,6 +114,11 @@ export async function openTicket(options: {
     ],
     footer: 'Powered by Tixora',
   });
+
+  // 3. Custom Welcome Message
+  if (category?.welcome_message) {
+    embed.setDescription(category.welcome_message.replace('{user}', `<@${member.id}>`));
+  }
 
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId(`ticket_close:${ticket.id}`).setLabel('Close Ticket').setStyle(ButtonStyle.Danger).setEmoji('🔒'),
