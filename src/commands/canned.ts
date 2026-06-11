@@ -1,31 +1,65 @@
-import { SlashCommandBuilder, ChatInputCommandInteraction } from 'discord.js';
-  import { createClient } from '@supabase/supabase-js';
+import { SlashCommandBuilder, EmbedBuilder, ChatInputCommandInteraction, PermissionFlagsBits } from 'discord.js';
+import { query } from '../database/client.js';
 
-  const supabase = createClient(
-    process.env.SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  );
-
-  export const data = new SlashCommandBuilder()
+export default {
+  data: new SlashCommandBuilder()
     .setName('canned')
-    .setDescription('Send a canned reply in this ticket')
-    .addStringOption(o => o.setName('name').setDescription('Name or shortcut of the canned reply').setRequired(true));
+    .setDescription('Manage canned responses')
+    .addSubcommand(sub =>
+      sub.setName('list')
+        .setDescription('List all canned responses')
+    )
+    .addSubcommand(sub =>
+      sub.setName('add')
+        .setDescription('Add a canned response')
+        .addStringOption(opt => opt.setName('name').setDescription('Name of the response').setRequired(true))
+        .addStringOption(opt => opt.setName('content').setDescription('Content of the response').setRequired(true))
+    )
+    .addSubcommand(sub =>
+      sub.setName('delete')
+        .setDescription('Delete a canned response')
+        .addStringOption(opt => opt.setName('name').setDescription('Name of the response').setRequired(true))
+    )
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages),
 
-  export async function execute(interaction: ChatInputCommandInteraction) {
-    const name = interaction.options.getString('name', true);
+  async execute(interaction: ChatInputCommandInteraction) {
+    const subcommand = interaction.options.getSubcommand();
     const guildId = interaction.guildId!;
 
-    const { data: replies } = await supabase
-      .from('canned_replies')
-      .select()
-      .eq('guild_id', guildId)
-      .or(`name.ilike.${name},shortcut.ilike.${name}`)
-      .limit(1);
+    if (subcommand === 'list') {
+      const { rows } = await query('canned_responses', 'select', { filter: { guild_id: guildId } });
+      
+      if (rows.length === 0) {
+        return interaction.reply({ content: 'No canned responses found.', ephemeral: true });
+      }
 
-    if (!replies || replies.length === 0) {
-      await interaction.reply({ content: `No canned reply found for "${name}". Check your dashboard.`, ephemeral: true });
-      return;
+      const embed = new EmbedBuilder()
+        .setTitle('Canned Responses')
+        .setDescription(rows.map((r: any) => `**${r.name}**: ${r.content.substring(0, 50)}...`).join('\n'))
+        .setColor('#5865F2');
+
+      return interaction.reply({ embeds: [embed], ephemeral: true });
     }
 
-    await interaction.reply({ content: replies[0].content });
+    if (subcommand === 'add') {
+      const name = interaction.options.getString('name')!;
+      const content = interaction.options.getString('content')!;
+
+      await query('canned_responses', 'insert', { 
+        data: { guild_id: guildId, name, content } 
+      });
+
+      return interaction.reply({ content: `Added canned response: **${name}**`, ephemeral: true });
+    }
+
+    if (subcommand === 'delete') {
+      const name = interaction.options.getString('name')!;
+
+      await query('canned_responses', 'delete', { 
+        filter: { guild_id: guildId, name } 
+      });
+
+      return interaction.reply({ content: `Deleted canned response: **${name}**`, ephemeral: true });
+    }
   }
+};
