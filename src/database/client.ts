@@ -20,7 +20,9 @@ export const query = async (text: string, params?: any[]) => {
   try {
     const res = await pool.query(text, params);
     const duration = Date.now() - start;
-    if (duration > 1000) console.warn(\`[Postgres] Slow query (\${duration}ms): \${text}\`);
+    if (duration > 1000) {
+      console.warn(`[Postgres] Slow query (${duration}ms): ${text}`);
+    }
     return res;
   } catch (err) {
     console.error('[Postgres] Query Error:', err);
