@@ -128,9 +128,10 @@ export default async function onReady(client: Client): Promise<void> {
   startAutoCloseJob(client);
 
   // Sync guild info to DB after a short delay (let guild cache populate)
-  setTimeout(() => syncGuildInfo(client), 5_000);
+  // Non-blocking: don't wait for this to complete
+  setTimeout(() => syncGuildInfo(client).catch(err => console.error('[Tixora] Guild sync error:', err)), 5_000);
 
-  // Post initial status and then every 5 minutes
-  setTimeout(() => postStatusUpdate(client), 10_000);
-  setInterval(() => postStatusUpdate(client), 5 * 60 * 1000);
+  // Post initial status and then every 5 minutes (non-critical)
+  setTimeout(() => postStatusUpdate(client).catch(err => console.error('[Tixora] Status update error:', err)), 10_000);
+  setInterval(() => postStatusUpdate(client).catch(err => console.error('[Tixora] Status update error:', err)), 5 * 60 * 1000);
 }
