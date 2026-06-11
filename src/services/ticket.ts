@@ -48,14 +48,14 @@ export async function openTicket(options: {
   }
 
   // 2. Custom Naming Scheme
-  let channelName = \`ticket-\${member.user.username.toLowerCase().replace(/[^a-z0-9]/g, '')}\`;
+  let channelName = `ticket-${member.user.username.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
   if (category?.naming_scheme) {
     channelName = category.naming_scheme
       .replace('{username}', member.user.username.toLowerCase().replace(/[^a-z0-9]/g, ''))
       .replace('{id}', member.id)
       .slice(0, 100);
   } else {
-    channelName += \`-\${Date.now().toString(36)}\`;
+    channelName += `-${Date.now().toString(36)}`;
   }
 
   const channel = await guild.channels.create({
@@ -105,11 +105,11 @@ export async function openTicket(options: {
   // Build opening embed
   const priorityData = ticket.priority_id ? await getPriorityById(ticket.priority_id) : null;
   const embed = ticketEmbed({
-    title: \`Ticket #\${channel.name}\`,
-    description: \`Hello \${member}, a staff member will assist you shortly.\n\nPlease describe your issue in detail.\`,
+    title: `Ticket #${channel.name}`,
+    description: `Hello ${member}, a staff member will assist you shortly.\n\nPlease describe your issue in detail.`,
     color: priorityData ? hexToDecimal(priorityData.color_hex) : 0x5865F2,
     fields: [
-      { name: 'Opened by', value: \`<@\${member.id}>\`, inline: true },
+      { name: 'Opened by', value: `<@${member.id}>`, inline: true },
       { name: 'Category', value: category?.name ?? 'General', inline: true },
       ...(priorityData ? [{ name: 'Priority', value: priorityData.name, inline: true }] : []),
     ],
@@ -118,12 +118,12 @@ export async function openTicket(options: {
 
   // 3. Custom Welcome Message
   if (category?.welcome_message) {
-    embed.setDescription(category.welcome_message.replace('{user}', \`<@\${member.id}>\`));
+    embed.setDescription(category.welcome_message.replace('{user}', `<@${member.id}>`));
   }
 
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId(\`ticket_close:\${ticket.id}\`).setLabel('Close Ticket').setStyle(ButtonStyle.Danger).setEmoji('🔒'),
-    new ButtonBuilder().setCustomId(\`ticket_claim:\${ticket.id}\`).setLabel('Claim').setStyle(ButtonStyle.Primary).setEmoji('🙋'),
+    new ButtonBuilder().setCustomId(`ticket_close:${ticket.id}`).setLabel('Close Ticket').setStyle(ButtonStyle.Danger).setEmoji('🔒'),
+    new ButtonBuilder().setCustomId(`ticket_claim:${ticket.id}`).setLabel('Claim').setStyle(ButtonStyle.Primary).setEmoji('🙋'),
   );
 
   // ── Pings Feature ──────────────────────────────────────────────────────────
@@ -132,9 +132,9 @@ export async function openTicket(options: {
   const pingOpener = (category as any)?.ping_opener !== false;
   const deletePing = (category as any)?.delete_ping === true;
 
-  if (pingOpener) pingContent += \`<@\${member.id}> \`;
+  if (pingOpener) pingContent += `<@${member.id}> `;
   if (pingRoles.length > 0) {
-    pingContent += pingRoles.map((id: string) => \`<@&\${id}>\`).join(' ');
+    pingContent += pingRoles.map((id: string) => `<@&${id}>`).join(' ');
   }
 
   const mainMessage = await channel.send({ 
@@ -205,17 +205,17 @@ export async function buildAndSendTranscript(ticket: Ticket, channel: TextChanne
     await saveAiSummary(ticket.id, summary);
 
     const guildConfig = await getGuild(ticket.guild_id);
-    const transcriptUrl = \`\${DASHBOARD_BASE_URL}/dashboard/\${ticket.guild_id}/transcripts/\${ticket.id}\`;
+    const transcriptUrl = `${DASHBOARD_BASE_URL}/dashboard/${ticket.guild_id}/transcripts/${ticket.id}`;
 
     const embed = new EmbedBuilder()
       .setColor(0x5865F2)
       .setTitle('🔒 Ticket Closed')
-      .setDescription(\`**AI Summary**\n\${summary}\`)
+      .setDescription(`**AI Summary**\n${summary}`)
       .addFields(
-        { name: 'Ticket ID', value: \`\`\`\${ticket.id}\`\`\`, inline: true },
-        { name: 'Opened by', value: \`<@\${ticket.opener_id}>\`, inline: true },
+        { name: 'Ticket ID', value: `\`\`\`${ticket.id}\`\`\``, inline: true },
+        { name: 'Opened by', value: `<@${ticket.opener_id}>`, inline: true },
         { name: 'Category', value: category?.name ?? 'General', inline: true },
-        { name: 'Transcript', value: \`[View full transcript](\${transcriptUrl})\`, inline: false },
+        { name: 'Transcript', value: `[View full transcript](${transcriptUrl})`, inline: false },
       )
       .setTimestamp()
       .setFooter({ text: 'Powered by Tixora' });
