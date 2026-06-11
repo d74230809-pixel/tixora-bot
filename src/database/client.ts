@@ -1,7 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import ws from 'ws';
 
-const WEB_API_URL = process.env.WEB_API_URL || 'https://tixora.app/api/trpc';
+const WEB_API_URL = process.env.WEB_API_URL || 'https://tixorabot.up.railway.app/api/trpc';
 const BOT_API_KEY = process.env.BOT_API_KEY || 'tixora_internal_key_2026';
 
 export const query = async (table: string, action: 'select' | 'insert' | 'update' | 'delete', options: any = {}) => {
