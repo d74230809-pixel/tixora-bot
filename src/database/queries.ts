@@ -3,25 +3,37 @@ import type {
   Guild, Panel, Category, Form, Ticket,
   TicketActionType, TranscriptMessage, PriorityLevel
 } from '../types/index.js';
+import { getCachedGuild, setCachedGuild, getCachedBlacklist, setCachedBlacklist } from '../utils/cache.js';
 
 // ── Guilds ───────────────────────────────────────────────────────────────────
 
 export async function ensureGuild(guildId: string): Promise<Guild> {
+  const cached = getCachedGuild(guildId);
+  if (cached) return cached;
+
   const { data, error } = await db
     .from('guilds')
     .upsert({ guild_id: guildId }, { onConflict: 'guild_id', ignoreDuplicates: true })
     .select()
     .single();
+  
   if (error) {
     const existing = await db.from('guilds').select().eq('guild_id', guildId).single();
     if (existing.error) throw existing.error;
+    if (existing.data) setCachedGuild(guildId, existing.data);
     return existing.data as Guild;
   }
+  
+  if (data) setCachedGuild(guildId, data);
   return data as Guild;
 }
 
 export async function getGuild(guildId: string): Promise<Guild | null> {
+  const cached = getCachedGuild(guildId);
+  if (cached) return cached;
+
   const { data } = await db.from('guilds').select().eq('guild_id', guildId).single();
+  if (data) setCachedGuild(guildId, data);
   return data as Guild | null;
 }
 
@@ -74,8 +86,13 @@ export async function getPrioritiesForGuild(guildId: string): Promise<PriorityLe
 // ── Blacklist ─────────────────────────────────────────────────────────────────
 
 export async function isBlacklisted(guildId: string, userId: string): Promise<boolean> {
-  const { data } = await db.from('blacklist').select('id').eq('guild_id', guildId).eq('user_id', userId).single();
-  return data !== null;
+  const cached = getCachedBlacklist(guildId);
+  if (cached) return cached.has(userId);
+
+  const { data } = await db.from('blacklist').select('user_id').eq('guild_id', guildId);
+  const userIds = (data ?? []).map(b => b.user_id);
+  setCachedBlacklist(guildId, userIds);
+  return userIds.includes(userId);
 }
 
 export async function addToBlacklist(guildId: string, userId: string, createdBy: string, reason?: string): Promise<void> {

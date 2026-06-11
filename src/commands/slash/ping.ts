@@ -7,7 +7,7 @@ export default {
   async execute(interaction: ChatInputCommandInteraction): Promise<void> {
     const latency = Date.now() - interaction.createdTimestamp;
     await interaction.reply({
-      embeds: [infoEmbed('Pong!', `Bot latency: **${latency}ms** | WS: **${interaction.client.ws.ping}ms**`)],
+      embeds: [infoEmbed('Pong!', `🛰️ **Latency:** \`${latency}ms\`\n📡 **Websocket:** \`${interaction.client.ws.ping}ms\`\n⚡ **Status:** \`Optimal\``)],
       ephemeral: true,
     });
   },

@@ -48,10 +48,24 @@ export default {
       await interaction.showModal(modal);
       return;
     }
+    // Defer immediately to avoid timeout
     await interaction.deferReply({ ephemeral: true });
-    await processTicketClose(ticket, interaction.user.id, reason);
-    await buildAndSendTranscript(ticket, interaction.channel as import('discord.js').TextChannel);
-    await interaction.editReply({ embeds: [infoEmbed('Ticket Closed', 'Transcript saved and AI summary generated.')] });
+    
+    try {
+      await processTicketClose(ticket, interaction.user.id, reason);
+      
+      // Send the transcript in the background so the user doesn't wait
+      buildAndSendTranscript(ticket, interaction.channel as import('discord.js').TextChannel).catch(err => {
+        console.error('[Close] Transcript error:', err);
+      });
+
+      await interaction.editReply({ 
+        embeds: [infoEmbed('Ticket Closed', 'The ticket has been closed. Transcript is being generated.')] 
+      });
+    } catch (err) {
+      console.error('[Close] Error:', err);
+      await interaction.editReply({ embeds: [errorEmbed('Error', 'Failed to close ticket.')] });
+    }
   },
 
   async prefixExecute(message: Message, args: string[]): Promise<void> {

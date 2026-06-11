@@ -12,25 +12,22 @@ export default {
   async execute(interaction: ChatInputCommandInteraction): Promise<void> {
     const embed = new EmbedBuilder()
       .setColor(TIXORA_COLOR)
-      .setTitle('Tixora Dashboard')
+      .setAuthor({ name: 'Tixora Management', iconURL: 'https://tixora.up.railway.app/favicon.ico' })
+      .setTitle('🚀 Take control of your support')
       .setDescription(
-        `Configure Tixora for **${interaction.guild?.name}** from the web dashboard.\n\n` +
-        `**[Open Dashboard →](${DASHBOARD_URL}/dashboard/${interaction.guildId})**\n\n` +
-        '**What you can do from the dashboard:**\n' +
-        '• Create ticket panels and customise button labels/colors\n' +
-        '• Add ticket categories (routes tickets to different channels)\n' +
-        '• Set up ticket forms (ask questions before opening)\n' +
-        '• Configure staff roles, priority levels, and blacklist\n' +
-        '• Set log channel and transcript channel\n' +
-        '• View analytics, transcripts, and ratings\n' +
-        '• Manage canned replies and knowledge base\n' +
-        '• Browse and import panel templates from the community',
+        `Configure **${interaction.guild?.name}** with our high-performance dashboard.\n\n` +
+        `**[Open Web Dashboard](${DASHBOARD_URL}/dashboard/${interaction.guildId})**\n\n` +
+        '**Powerful Features:**\n' +
+        '✨ **Professional Panels:** Custom embeds, colors, and emojis.\n' +
+        '📋 **Dynamic Forms:** Ask the right questions before a ticket opens.\n' +
+        '📊 **Live Analytics:** Track staff performance and ticket volume.\n' +
+        '🤖 **AI Summaries:** Instant summaries of every closed ticket.\n' +
+        '🔒 **Secure Logs:** Full transcripts with searchable history.',
       )
       .addFields(
-        { name: 'Dashboard URL', value: `${DASHBOARD_URL}/dashboard/${interaction.guildId}`, inline: false },
-        { name: 'Quick guide', value: `1. Sign in with Discord\n2. Select **${interaction.guild?.name ?? 'your server'}**\n3. Go to **Panels** and create your first ticket panel\n4. Use \`/help\` to see all available commands`, inline: false },
+        { name: '🔗 Quick Access', value: `[Dashboard](${DASHBOARD_URL}/dashboard/${interaction.guildId}) • [Documentation](${DASHBOARD_URL}/docs) • [Support Server](${DASHBOARD_URL}/support)`, inline: false },
       )
-      .setFooter({ text: 'Tixora — Professional Discord Ticket Bot' })
+      .setFooter({ text: 'Tixora Support • tixora.app', iconURL: 'https://tixora.up.railway.app/favicon.ico' })
       .setTimestamp();
 
     await interaction.reply({ embeds: [embed], ephemeral: true });
