@@ -1,6 +1,10 @@
 import pg from 'pg';
 import { createClient } from '@supabase/supabase-js';
 import ws from 'ws';
+import dns from 'dns';
+
+// Force IPv4 for database connection to fix ENETUNREACH on Railway
+dns.setDefaultResultOrder('ipv4first');
 
 // Optimized pool settings for Railway
 const pool = new pg.Pool({
