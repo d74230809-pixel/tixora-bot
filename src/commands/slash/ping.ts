@@ -1,19 +1,33 @@
-import { SlashCommandBuilder, type ChatInputCommandInteraction, type Message } from 'discord.js';
-import { infoEmbed } from '../../utils/embed.js';
+import { SlashCommandBuilder, EmbedBuilder, type ChatInputCommandInteraction } from 'discord.js';
+import { query } from '../../database/client.js';
 
 export default {
-  data: new SlashCommandBuilder().setName('ping').setDescription('Check if Tixora is online'),
+  data: new SlashCommandBuilder()
+    .setName('ping')
+    .setDescription('Check bot and database latency'),
+  async execute(interaction: ChatInputCommandInteraction) {
+    const start = Date.now();
+    await interaction.deferReply();
+    
+    // Test DB Latency
+    const dbStart = Date.now();
+    await query('SELECT 1');
+    const dbLatency = Date.now() - dbStart;
+    
+    const botLatency = Date.now() - start;
+    const apiLatency = Math.round(interaction.client.ws.ping);
 
-  async execute(interaction: ChatInputCommandInteraction): Promise<void> {
-    const latency = Date.now() - interaction.createdTimestamp;
-    await interaction.reply({
-      embeds: [infoEmbed('Pong!', `🛰️ **Latency:** \`${latency}ms\`\n📡 **Websocket:** \`${interaction.client.ws.ping}ms\`\n⚡ **Status:** \`Optimal\``)],
-      ephemeral: true,
-    });
-  },
+    const embed = new EmbedBuilder()
+      .setTitle('🏓 Pong!')
+      .setColor(dbLatency < 100 ? 0x00FF00 : dbLatency < 500 ? 0xFFFF00 : 0xFF0000)
+      .addFields(
+        { name: '🤖 Bot Latency', value: \`\${botLatency}ms\`, inline: true },
+        { name: '🌐 API Latency', value: \`\${apiLatency}ms\`, inline: true },
+        { name: '🗄️ DB Latency', value: \`\${dbLatency}ms\`, inline: true },
+      )
+      .setTimestamp()
+      .setFooter({ text: 'Tixora Support • tixora.app' });
 
-  async prefixExecute(message: Message): Promise<void> {
-    const latency = Date.now() - message.createdTimestamp;
-    await message.reply({ embeds: [infoEmbed('Pong!', `Bot latency: **${latency}ms**`)] });
+    await interaction.editReply({ embeds: [embed] });
   },
 };

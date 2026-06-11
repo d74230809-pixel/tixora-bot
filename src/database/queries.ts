@@ -1,247 +1,102 @@
-import { db } from './client.js';
-import type {
-  Guild, Panel, Category, Form, Ticket,
-  TicketActionType, TranscriptMessage, PriorityLevel
-} from '../types/index.js';
-import { getCachedGuild, setCachedGuild, getCachedBlacklist, setCachedBlacklist } from '../utils/cache.js';
+import { query } from './client.js';
+import type { Guild, Panel, Category, Form, Ticket, PriorityLevel } from '../types/index.js';
 
-// ── Guilds ───────────────────────────────────────────────────────────────────
-
-export async function ensureGuild(guildId: string): Promise<Guild> {
-  const cached = getCachedGuild(guildId);
-  if (cached) return cached;
-
-  const { data, error } = await db
-    .from('guilds')
-    .upsert({ guild_id: guildId }, { onConflict: 'guild_id', ignoreDuplicates: true })
-    .select()
-    .single();
-  
-  if (error) {
-    const existing = await db.from('guilds').select().eq('guild_id', guildId).single();
-    if (existing.error) throw existing.error;
-    if (existing.data) setCachedGuild(guildId, existing.data);
-    return existing.data as Guild;
-  }
-  
-  if (data) setCachedGuild(guildId, data);
-  return data as Guild;
-}
+// Helper to convert snake_case DB rows to camelCase if needed, 
+// but we'll stick to what the bot expects (mostly snake_case from Supabase types)
 
 export async function getGuild(guildId: string): Promise<Guild | null> {
-  const cached = getCachedGuild(guildId);
-  if (cached) return cached;
-
-  const { data } = await db.from('guilds').select().eq('guild_id', guildId).single();
-  if (data) setCachedGuild(guildId, data);
-  return data as Guild | null;
+  const res = await query('SELECT * FROM guilds WHERE guild_id = $1', [guildId]);
+  return res.rows[0] || null;
 }
 
-export async function updateGuild(guildId: string, updates: Partial<Guild>): Promise<void> {
-  await db.from('guilds').update(updates).eq('guild_id', guildId);
+export async function ensureGuild(guildId: string): Promise<Guild> {
+  const existing = await getGuild(guildId);
+  if (existing) return existing;
+  
+  const res = await query(
+    'INSERT INTO guilds (guild_id) VALUES ($1) ON CONFLICT (guild_id) DO UPDATE SET guild_id = EXCLUDED.guild_id RETURNING *',
+    [guildId]
+  );
+  return res.rows[0];
 }
 
-// ── Panels ───────────────────────────────────────────────────────────────────
-
-export async function getPanelsForGuild(guildId: string): Promise<Panel[]> {
-  const { data } = await db.from('panels').select().eq('guild_id', guildId);
-  return (data as Panel[]) ?? [];
+export async function getCategoryById(id: string): Promise<Category | null> {
+  const res = await query('SELECT * FROM categories WHERE id = $1', [id]);
+  return res.rows[0] || null;
 }
 
-export async function updatePanelMessage(panelId: string, channelId: string, messageId: string): Promise<void> {
-  await db.from('panels').update({ channel_id: channelId, message_id: messageId, updated_at: new Date().toISOString() }).eq('id', panelId);
+export async function getPriorityById(id: string): Promise<PriorityLevel | null> {
+  const res = await query('SELECT * FROM priorities WHERE id = $1', [id]);
+  return res.rows[0] || null;
 }
 
-// ── Categories ───────────────────────────────────────────────────────────────
-
-export async function getCategoriesForGuild(guildId: string): Promise<Category[]> {
-  const { data } = await db.from('categories').select().eq('guild_id', guildId);
-  return (data as Category[]) ?? [];
+export async function getFormById(id: string): Promise<Form | null> {
+  const res = await query('SELECT * FROM forms WHERE id = $1', [id]);
+  return res.rows[0] || null;
 }
 
-export async function getCategoryById(categoryId: string): Promise<Category | null> {
-  const { data } = await db.from('categories').select().eq('id', categoryId).single();
-  return data as Category | null;
-}
-
-// ── Forms ────────────────────────────────────────────────────────────────────
-
-export async function getFormById(formId: string): Promise<Form | null> {
-  const { data } = await db.from('forms').select().eq('id', formId).single();
-  return data as Form | null;
-}
-
-// ── Priority Levels ──────────────────────────────────────────────────────────
-
-export async function getPriorityById(priorityId: string): Promise<PriorityLevel | null> {
-  const { data } = await db.from('priority_levels').select().eq('id', priorityId).single();
-  return data as PriorityLevel | null;
-}
-
-export async function getPrioritiesForGuild(guildId: string): Promise<PriorityLevel[]> {
-  const { data } = await db.from('priority_levels').select().eq('guild_id', guildId).order('sort_order');
-  return (data as PriorityLevel[]) ?? [];
-}
-
-// ── Blacklist ─────────────────────────────────────────────────────────────────
-
-export async function isBlacklisted(guildId: string, userId: string): Promise<boolean> {
-  const cached = getCachedBlacklist(guildId);
-  if (cached) return cached.has(userId);
-
-  const { data } = await db.from('blacklist').select('user_id').eq('guild_id', guildId);
-  const userIds = (data ?? []).map(b => b.user_id);
-  setCachedBlacklist(guildId, userIds);
-  return userIds.includes(userId);
-}
-
-export async function addToBlacklist(guildId: string, userId: string, createdBy: string, reason?: string): Promise<void> {
-  await db.from('blacklist').upsert({ guild_id: guildId, user_id: userId, created_by: createdBy, reason: reason ?? null }, { onConflict: 'guild_id,user_id' });
-}
-
-export async function removeFromBlacklist(guildId: string, userId: string): Promise<void> {
-  await db.from('blacklist').delete().eq('guild_id', guildId).eq('user_id', userId);
-}
-
-// ── Tickets ───────────────────────────────────────────────────────────────────
-
-export async function createTicket(data: {
-  guild_id: string;
-  channel_id: string;
-  opener_id: string;
-  category_id?: string | null;
-  priority_id?: string | null;
-  form_answers_json?: Record<string, string> | null;
-}): Promise<Ticket> {
-  const { data: ticket, error } = await db.from('tickets').insert({
-    guild_id: data.guild_id,
-    channel_id: data.channel_id,
-    opener_id: data.opener_id,
-    category_id: data.category_id ?? null,
-    priority_id: data.priority_id ?? null,
-    form_answers_json: data.form_answers_json ?? null,
-    status: 'open',
-    last_activity_at: new Date().toISOString(),
-  }).select().single();
-  if (error) throw error;
-  return ticket as Ticket;
-}
-
-export async function getTicketByChannel(channelId: string): Promise<Ticket | null> {
-  const { data } = await db.from('tickets').select().eq('channel_id', channelId).eq('status', 'open').single();
-  return data as Ticket | null;
-}
-
-export async function getTicketById(ticketId: string): Promise<Ticket | null> {
-  const { data } = await db.from('tickets').select().eq('id', ticketId).single();
-  return data as Ticket | null;
+export async function createTicket(data: any): Promise<Ticket> {
+  const columns = Object.keys(data).join(', ');
+  const values = Object.values(data);
+  const placeholders = values.map((_, i) => `$${i + 1}`).join(', ');
+  
+  const res = await query(
+    \`INSERT INTO tickets (\${columns}) VALUES (\${placeholders}) RETURNING *\`,
+    values
+  );
+  return res.rows[0];
 }
 
 export async function closeTicket(ticketId: string, reason?: string): Promise<void> {
-  await db.from('tickets').update({
-    status: 'closed',
-    closed_at: new Date().toISOString(),
-    close_reason: reason ?? null,
-  }).eq('id', ticketId);
+  await query(
+    'UPDATE tickets SET status = $1, closed_at = NOW(), close_reason = $2 WHERE id = $3',
+    ['closed', reason || null, ticketId]
+  );
 }
 
-export async function reopenTicket(ticketId: string): Promise<void> {
-  await db.from('tickets').update({
-    status: 'open',
-    closed_at: null,
-    close_reason: null,
-  }).eq('id', ticketId);
+export async function claimTicket(ticketId: string, staffId: string): Promise<void> {
+  await query(
+    'UPDATE tickets SET staff_id = $1, claimed_at = NOW() WHERE id = $2',
+    [staffId, ticketId]
+  );
 }
 
-export async function claimTicket(ticketId: string, userId: string): Promise<void> {
-  await db.from('tickets').update({ claimed_by: userId }).eq('id', ticketId);
+export async function getTicketById(id: string): Promise<Ticket | null> {
+  const res = await query('SELECT * FROM tickets WHERE id = $1', [id]);
+  return res.rows[0] || null;
 }
 
-export async function unclaimTicket(ticketId: string): Promise<void> {
-  await db.from('tickets').update({ claimed_by: null }).eq('id', ticketId);
+export async function getTicketByChannel(channelId: string): Promise<Ticket | null> {
+  const res = await query('SELECT * FROM tickets WHERE channel_id = $1 AND status = $2', [channelId, 'open']);
+  return res.rows[0] || null;
 }
 
-export async function updateTicketPriority(ticketId: string, priorityId: string | null): Promise<void> {
-  await db.from('tickets').update({ priority_id: priorityId }).eq('id', ticketId);
+export async function isBlacklisted(guildId: string, userId: string): Promise<boolean> {
+  const res = await query(
+    'SELECT 1 FROM blacklists WHERE guild_id = $1 AND user_id = $2',
+    [guildId, userId]
+  );
+  return res.rowCount ? res.rowCount > 0 : false;
 }
 
-export async function addTagToTicket(ticketId: string, tag: string): Promise<void> {
-  const ticket = await getTicketById(ticketId);
-  if (!ticket) return;
-  const tags = ticket.tags_json ?? [];
-  if (!tags.includes(tag)) {
-    await db.from('tickets').update({ tags_json: [...tags, tag] }).eq('id', ticketId);
-  }
+export async function logAction(ticketId: string, userId: string, action: string, details?: any): Promise<void> {
+  await query(
+    'INSERT INTO ticket_actions (ticket_id, user_id, action_type, details_json) VALUES ($1, $2, $3, $4)',
+    [ticketId, userId, action, details || {}]
+  );
 }
 
-export async function removeTagFromTicket(ticketId: string, tag: string): Promise<void> {
-  const ticket = await getTicketById(ticketId);
-  if (!ticket) return;
-  const tags = (ticket.tags_json ?? []).filter((t: string) => t !== tag);
-  await db.from('tickets').update({ tags_json: tags }).eq('id', ticketId);
+export async function saveTranscript(ticketId: string, messages: any[]): Promise<void> {
+  // Store as JSON in transcripts table if it exists, or just log it
+  await query(
+    'INSERT INTO transcripts (ticket_id, messages_json) VALUES ($1, $2) ON CONFLICT (ticket_id) DO UPDATE SET messages_json = EXCLUDED.messages_json',
+    [ticketId, JSON.stringify(messages)]
+  );
 }
 
-export async function updateLastActivity(ticketId: string): Promise<void> {
-  await db.from('tickets').update({ last_activity_at: new Date().toISOString() }).eq('id', ticketId);
-}
-
-export async function getOpenTicketsOlderThan(guildId: string, hours: number): Promise<Ticket[]> {
-  const cutoff = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
-  const { data } = await db.from('tickets')
-    .select()
-    .eq('guild_id', guildId)
-    .eq('status', 'open')
-    .lt('last_activity_at', cutoff);
-  return (data as Ticket[]) ?? [];
-}
-
-// ── Ticket Actions ────────────────────────────────────────────────────────────
-
-export async function logAction(ticketId: string, actorId: string, actionType: TicketActionType, metadata: Record<string, unknown> = {}): Promise<void> {
-  await db.from('ticket_actions').insert({
-    ticket_id: ticketId,
-    actor_id: actorId,
-    action_type: actionType,
-    metadata_json: metadata,
-  });
-}
-
-// ── Ticket Members ────────────────────────────────────────────────────────────
-
-export async function addMemberToTicket(ticketId: string, userId: string, addedBy: string): Promise<void> {
-  await db.from('ticket_members').upsert({ ticket_id: ticketId, user_id: userId, added_by: addedBy }, { onConflict: 'ticket_id,user_id', ignoreDuplicates: true });
-}
-
-export async function removeMemberFromTicket(ticketId: string, userId: string): Promise<void> {
-  await db.from('ticket_members').delete().eq('ticket_id', ticketId).eq('user_id', userId);
-}
-
-// ── Transcripts ───────────────────────────────────────────────────────────────
-
-export async function saveTranscript(ticketId: string, messages: TranscriptMessage[]): Promise<void> {
-  await db.from('transcripts').upsert({ ticket_id: ticketId, messages_json: messages }, { onConflict: 'ticket_id' });
-}
-
-export async function saveAiSummary(ticketId: string, summaryText: string): Promise<void> {
-  await db.from('ai_summaries').upsert({ ticket_id: ticketId, summary_text: summaryText, model_used: 'meta/llama-3.1-8b-instruct' }, { onConflict: 'ticket_id' });
-}
-
-// ── Ratings ───────────────────────────────────────────────────────────────────
-
-export async function saveRating(ticketId: string, guildId: string, ratedBy: string, rating: number, feedbackText?: string): Promise<void> {
-  await db.from('ticket_ratings').upsert({
-    ticket_id: ticketId,
-    guild_id: guildId,
-    rated_by: ratedBy,
-    rating,
-    feedback_text: feedbackText ?? null,
-    rated_at: new Date().toISOString(),
-  }, { onConflict: 'ticket_id' });
-}
-
-// ── Auto-close configs ────────────────────────────────────────────────────────
-
-export async function getAutoCloseConfigs(guildId: string): Promise<{ timeout_hours: number; category_id: string | null; enabled: boolean }[]> {
-  const { data } = await db.from('auto_close_config').select().eq('guild_id', guildId).eq('enabled', true);
-  return data ?? [];
+export async function saveAiSummary(ticketId: string, summary: string): Promise<void> {
+  await query(
+    'UPDATE tickets SET ai_summary = $1 WHERE id = $2',
+    [summary, ticketId]
+  );
 }

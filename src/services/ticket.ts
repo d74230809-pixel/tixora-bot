@@ -7,7 +7,7 @@ import {
   createTicket, closeTicket, logAction, saveTranscript,
   saveAiSummary, getGuild, getCategoryById, getPriorityById, getFormById,
 } from '../database/queries.js';
-import { db } from '../database/client.js';
+import { db, query } from '../database/client.js';
 import { fetchAllMessages } from './transcript.js';
 import { generateTicketSummary } from './ai.js';
 import { ticketEmbed, successEmbed, hexToDecimal } from '../utils/embed.js';
@@ -23,32 +23,22 @@ export async function openTicket(options: {
 }): Promise<TextChannel> {
   const { guild, member, categoryId, formAnswers } = options;
 
-  // 1. Fetch config first to fail fast
+  // 1. Fail fast if category or guild is missing
   const category = categoryId ? await getCategoryById(categoryId) : null;
   const guildConfig = await getGuild(guild.id);
 
-  // 2. Enforce max_open_per_user
+  // 2. Check max open tickets
   if (category?.max_open_per_user) {
-    const { data: openTickets, error: countErr } = await db
-      .from('tickets')
-      .select('id')
-      .eq('guild_id', guild.id)
-      .eq('opener_id', member.id)
-      .eq('category_id', categoryId)
-      .eq('status', 'open');
-    
-    if (countErr) console.error('[openTicket] Error checking open tickets:', countErr);
-    if (openTickets && openTickets.length >= category.max_open_per_user) {
-      throw new Error(`You already have ${openTickets.length} open ticket(s) in this category.`);
+    const res = await query(
+      'SELECT COUNT(*) FROM tickets WHERE guild_id = $1 AND opener_id = $2 AND category_id = $3 AND status = $4',
+      [guild.id, member.id, categoryId, 'open']
+    );
+    if (parseInt(res.rows[0].count) >= category.max_open_per_user) {
+      throw new Error(`You already have ${res.rows[0].count} open ticket(s) in this category.`);
     }
   }
 
-  // 3. Prepare channel settings
-  let parentId: string | undefined;
-  if (category?.target_channel_id) {
-    parentId = category.target_channel_id;
-  }
-
+  // 3. Channel Naming
   let channelName = `ticket-${member.user.username.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
   if (category?.naming_scheme) {
     channelName = category.naming_scheme
@@ -59,143 +49,102 @@ export async function openTicket(options: {
     channelName += `-${Date.now().toString(36)}`;
   }
 
-  // 4. Create DB record FIRST so we have a ticket ID and know the DB is working
-  // We use a placeholder channel_id that we'll update in a second
-  const ticket = await createTicket({
-    guild_id: guild.id,
-    channel_id: 'pending', 
-    opener_id: member.id,
-    category_id: categoryId ?? null,
-    priority_id: category?.default_priority_id ?? null,
-    form_answers_json: formAnswers ?? null,
-  });
+  // 4. Create Channel FIRST (we deferred the interaction, so we have time)
+  const channel = await guild.channels.create({
+    name: channelName,
+    type: ChannelType.GuildText,
+    parent: category?.target_channel_id || undefined,
+    permissionOverwrites: [
+      { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
+      {
+        id: member.id,
+        allow: [
+          PermissionFlagsBits.ViewChannel,
+          PermissionFlagsBits.SendMessages,
+          PermissionFlagsBits.AttachFiles,
+          PermissionFlagsBits.ReadMessageHistory,
+        ],
+      },
+    ],
+  }) as TextChannel;
 
-  let channel: TextChannel;
   try {
-    // 5. Create Discord Channel
-    channel = await guild.channels.create({
-      name: channelName,
-      type: ChannelType.GuildText,
-      parent: parentId,
-      permissionOverwrites: [
-        {
-          id: guild.roles.everyone.id,
-          deny: [PermissionFlagsBits.ViewChannel],
-        },
-        {
-          id: member.id,
-          allow: [
-            PermissionFlagsBits.ViewChannel,
-            PermissionFlagsBits.SendMessages,
-            PermissionFlagsBits.AttachFiles,
-            PermissionFlagsBits.ReadMessageHistory,
-          ],
-        },
-      ],
-    }) as TextChannel;
+    // 5. Create DB Record
+    const ticket = await createTicket({
+      guild_id: guild.id,
+      channel_id: channel.id,
+      opener_id: member.id,
+      category_id: categoryId ?? null,
+      priority_id: category?.default_priority_id ?? null,
+      form_answers_json: formAnswers ?? null,
+    });
 
-    // 6. Update DB with real channel ID
-    await db.from('tickets').update({ channel_id: channel.id }).eq('id', ticket.id);
+    await logAction(ticket.id, member.id, 'opened', { category: category?.name ?? 'General' });
+
+    // 6. Add Staff Roles
+    if (category?.staff_roles_json?.length) {
+      for (const roleId of category.staff_roles_json) {
+        try {
+          await channel.permissionOverwrites.create(roleId, {
+            ViewChannel: true, SendMessages: true, ReadMessageHistory: true,
+          });
+        } catch (e) { /* ignore */ }
+      }
+    }
+
+    // 7. Build Premium Welcome Embed
+    const priorityData = ticket.priority_id ? await getPriorityById(ticket.priority_id) : null;
+    const embed = new EmbedBuilder()
+      .setAuthor({ name: member.user.tag, iconURL: member.user.displayAvatarURL() })
+      .setTitle(`Ticket: ${category?.name ?? 'General Support'}`)
+      .setDescription(category?.welcome_message?.replace('{user}', `<@${member.id}>`) ?? `Hello ${member}, staff will be with you shortly.`)
+      .setColor(priorityData ? hexToDecimal(priorityData.color_hex) : 0x5865F2)
+      .addFields(
+        { name: '👤 Opener', value: `<@${member.id}>`, inline: true },
+        { name: '📂 Category', value: category?.name ?? 'General', inline: true },
+        ...(priorityData ? [{ name: '⚡ Priority', value: priorityData.name, inline: true }] : []),
+      )
+      .setTimestamp()
+      .setFooter({ text: 'Tixora Support • tixora.app' });
+
+    // 8. Premium Action Panel
+    const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId(`ticket_close:${ticket.id}`).setLabel('Close').setStyle(ButtonStyle.Danger).setEmoji('🔒'),
+      new ButtonBuilder().setCustomId(`ticket_claim:${ticket.id}`).setLabel('Claim').setStyle(ButtonStyle.Primary).setEmoji('🙋'),
+      new ButtonBuilder().setCustomId(`ticket_tools:${ticket.id}`).setLabel('Tools').setStyle(ButtonStyle.Secondary).setEmoji('🛠️'),
+    );
+
+    // 9. Handle Pings
+    let pingContent = '';
+    const pingRoles = (category as any)?.ping_roles_json || [];
+    if ((category as any)?.ping_opener !== false) pingContent += `<@${member.id}> `;
+    if (pingRoles.length > 0) pingContent += pingRoles.map((id: string) => `<@&${id}>`).join(' ');
+
+    const mainMessage = await channel.send({ 
+      content: pingContent.trim() || undefined, 
+      embeds: [embed], 
+      components: [row] 
+    });
+
+    if ((category as any)?.delete_ping && pingContent.trim()) {
+      setTimeout(() => mainMessage.edit({ content: '' }).catch(() => {}), 5000);
+    }
+
+    // 10. Form Responses
+    if (formAnswers && Object.keys(formAnswers).length > 0) {
+      const answersEmbed = new EmbedBuilder()
+        .setColor(0x5865F2)
+        .setTitle('📋 Form Responses')
+        .addFields(Object.entries(formAnswers).map(([k, v]) => ({ name: k, value: v.slice(0, 1024), inline: false })));
+      await channel.send({ embeds: [answersEmbed] });
+    }
+
+    return channel;
   } catch (err) {
-    // If channel creation fails, delete the DB record so we don't have a broken ticket
-    await db.from('tickets').delete().eq('id', ticket.id);
+    // Cleanup if DB fails
+    await channel.delete().catch(() => {});
     throw err;
   }
-
-  await logAction(ticket.id, member.id, 'opened', { category: category?.name ?? 'General' });
-
-  // 7. Add staff roles
-  if (category?.staff_roles_json?.length) {
-    for (const roleId of category.staff_roles_json) {
-      try {
-        await channel.permissionOverwrites.create(roleId, {
-          ViewChannel: true,
-          SendMessages: true,
-          ReadMessageHistory: true,
-        });
-      } catch (e) { console.error(`[openTicket] Failed to add staff role ${roleId}:`, e); }
-    }
-  }
-
-  // 8. Build and Send Welcome Embed
-  const priorityData = ticket.priority_id ? await getPriorityById(ticket.priority_id) : null;
-  const embed = ticketEmbed({
-    title: `Ticket #${channel.name}`,
-    description: category?.welcome_message 
-      ? category.welcome_message.replace('{user}', `<@${member.id}>`)
-      : `Hello ${member}, a staff member will assist you shortly.\n\nPlease describe your issue in detail.`,
-    color: priorityData ? hexToDecimal(priorityData.color_hex) : 0x5865F2,
-    fields: [
-      { name: 'Opened by', value: `<@${member.id}>`, inline: true },
-      { name: 'Category', value: category?.name ?? 'General', inline: true },
-      ...(priorityData ? [{ name: 'Priority', value: priorityData.name, inline: true }] : []),
-    ],
-    footer: 'Powered by Tixora',
-  });
-
-  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId(`ticket_close:${ticket.id}`).setLabel('Close Ticket').setStyle(ButtonStyle.Danger).setEmoji('🔒'),
-    new ButtonBuilder().setCustomId(`ticket_claim:${ticket.id}`).setLabel('Claim').setStyle(ButtonStyle.Primary).setEmoji('🙋'),
-  );
-
-  // 9. Handle Pings
-  let pingContent = '';
-  const pingRoles = (category as any)?.ping_roles_json || [];
-  const pingOpener = (category as any)?.ping_opener !== false;
-  const deletePing = (category as any)?.delete_ping === true;
-
-  if (pingOpener) pingContent += `<@${member.id}> `;
-  if (pingRoles.length > 0) {
-    pingContent += pingRoles.map((id: string) => `<@&${id}>`).join(' ');
-  }
-
-  const mainMessage = await channel.send({ 
-    content: pingContent.trim() || undefined, 
-    embeds: [embed], 
-    components: [row] 
-  });
-
-  if (deletePing && pingContent.trim()) {
-    setTimeout(async () => {
-      try {
-        await mainMessage.edit({ content: '' });
-      } catch (err) { /* ignore */ }
-    }, 5000);
-  }
-
-  // 10. Form Responses
-  if (formAnswers && Object.keys(formAnswers).length > 0) {
-    let questionLabels: Record<string, string> = {};
-    try {
-      const formId = category?.form_id;
-      if (formId) {
-        const form = await getFormById(formId);
-        if (form) {
-          for (const q of form.questions_json as { id: string; label: string }[]) {
-            questionLabels[q.id] = q.label;
-          }
-        }
-      }
-    } catch { /* ignore */ }
-
-    const answersEmbed = new EmbedBuilder()
-      .setColor(0x5865F2)
-      .setTitle('📋 Form Responses')
-      .addFields(
-        Object.entries(formAnswers)
-          .filter(([, v]) => v.trim())
-          .map(([id, value]) => ({
-            name: questionLabels[id] ?? id,
-            value: value.slice(0, 1024),
-            inline: false,
-          }))
-      )
-      .setTimestamp();
-
-    await channel.send({ embeds: [answersEmbed] });
-  }
-
-  return channel;
 }
 
 export async function processTicketClose(ticket: Ticket, closedBy: string, reason?: string): Promise<void> {
@@ -207,37 +156,26 @@ export async function buildAndSendTranscript(ticket: Ticket, channel: TextChanne
   try {
     const messages = await fetchAllMessages(channel);
     await saveTranscript(ticket.id, messages);
-
     const category = ticket.category_id ? await getCategoryById(ticket.category_id) : null;
     const summary = await generateTicketSummary(messages, category?.name);
     await saveAiSummary(ticket.id, summary);
-
     const guildConfig = await getGuild(ticket.guild_id);
     const transcriptUrl = `${DASHBOARD_BASE_URL}/dashboard/${ticket.guild_id}/transcripts/${ticket.id}`;
 
     const embed = new EmbedBuilder()
       .setColor(0x5865F2)
       .setTitle('🔒 Ticket Closed')
-      .setDescription(`**AI Summary**\n${summary}`)
+      .setDescription(`**AI Summary**\n\${summary}`)
       .addFields(
-        { name: 'Ticket ID', value: `\`\`\`${ticket.id}\`\`\``, inline: true },
-        { name: 'Opened by', value: `<@${ticket.opener_id}>`, inline: true },
-        { name: 'Category', value: category?.name ?? 'General', inline: true },
-        { name: 'Transcript', value: `[View full transcript](${transcriptUrl})`, inline: false },
+        { name: 'Ticket ID', value: \`\`\`\${ticket.id}\`\`\`, inline: true },
+        { name: 'Opened by', value: \`<@\${ticket.opener_id}>\`, inline: true },
+        { name: 'Transcript', value: \`[View Transcript](\${transcriptUrl})\`, inline: true },
       )
-      .setTimestamp()
-      .setFooter({ text: 'Powered by Tixora' });
+      .setTimestamp();
 
     if (guildConfig?.log_channel_id) {
-      const logChannel = channel.guild.channels.cache.get(guildConfig.log_channel_id) as TextChannel | undefined;
+      const logChannel = channel.guild.channels.cache.get(guildConfig.log_channel_id) as TextChannel;
       if (logChannel) await logChannel.send({ embeds: [embed] });
     }
-
-    if (guildConfig?.transcript_channel_id && guildConfig.transcript_channel_id !== guildConfig.log_channel_id) {
-      const transcriptChannel = channel.guild.channels.cache.get(guildConfig.transcript_channel_id) as TextChannel | undefined;
-      if (transcriptChannel) await transcriptChannel.send({ embeds: [embed] });
-    }
-  } catch (err) {
-    console.error('Error building transcript:', err);
-  }
+  } catch (err) { console.error('Transcript error:', err); }
 }
