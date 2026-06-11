@@ -95,7 +95,7 @@ export async function removeFromBlacklist(guildId: string, userId: string): Prom
 export async function logAction(ticketId: string, userId: string, action: string, details?: any): Promise<void> {
   await query(
     'INSERT INTO ticket_actions (ticket_id, actor_id, action_type, metadata_json) VALUES ($1, $2, $3, $4)',
-    [ticketId, userId, action, details ? JSON.stringify(details) : null]
+    [ticketId, userId, action, details ? JSON.stringify(details) : '{}']
   );
 }
 
