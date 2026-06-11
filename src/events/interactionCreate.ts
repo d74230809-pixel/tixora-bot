@@ -2,12 +2,12 @@ import {
   type Interaction, type ChatInputCommandInteraction,
   type ButtonInteraction, type ModalSubmitInteraction,
   ActionRowBuilder, ModalBuilder, TextInputBuilder, TextInputStyle,
-  ButtonBuilder, ButtonStyle, EmbedBuilder, StringSelectMenuBuilder,
+  ButtonBuilder, ButtonStyle,
 } from 'discord.js';
 import type { SlashCommand } from '../bot.js';
 import {
   getTicketByChannel, getTicketById, claimTicket,
-  logAction, isBlacklisted, saveRating,
+  logAction, isBlacklisted,
   getCategoryById, getFormById,
 } from '../database/queries.js';
 import { openTicket, processTicketClose, buildAndSendTranscript } from '../services/ticket.js';
@@ -17,9 +17,8 @@ import type { Form } from '../types/index.js';
 
 function buildFormModal(form: Form, categoryId: string | null): ModalBuilder {
   const modal = new ModalBuilder()
-    .setCustomId(\`form_ticket_submit:\${categoryId ?? 'null'}\`)
+    .setCustomId(`form_ticket_submit:${categoryId ?? 'null'}`)
     .setTitle(form.name.slice(0, 45));
-
   const questions = (form.questions_json as any[]).slice(0, 5);
   for (const q of questions) {
     const input = new TextInputBuilder()
@@ -42,7 +41,7 @@ async function handleSlash(interaction: ChatInputCommandInteraction, commands: M
   const command = commands.get(interaction.commandName);
   if (!command) return;
   try { await command.execute(interaction); } catch (err) {
-    console.error(\`[Slash] Error in /\${interaction.commandName}:\`, err);
+    console.error(`[Slash] Error in /${interaction.commandName}:`, err);
     const reply = { embeds: [errorEmbed('Command failed', 'An unexpected error occurred.')], ephemeral: true };
     if (interaction.replied || interaction.deferred) await interaction.followUp(reply);
     else await interaction.reply(reply);
@@ -52,7 +51,6 @@ async function handleSlash(interaction: ChatInputCommandInteraction, commands: M
 async function handleButton(interaction: ButtonInteraction): Promise<void> {
   const [action, ...rest] = interaction.customId.split(':');
   if (!interaction.guild) return;
-
   if (action === 'panel_open') {
     const categoryId = rest[0] !== 'null' ? rest[0] : null;
     if (categoryId) {
@@ -71,12 +69,11 @@ async function handleButton(interaction: ButtonInteraction): Promise<void> {
     }
     try {
       const channel = await openTicket({ guild: interaction.guild, member, categoryId });
-      await interaction.editReply({ embeds: [successEmbed('Ticket Created', \`Your ticket: <#\${channel.id}>\`)] });
+      await interaction.editReply({ embeds: [successEmbed('Ticket Created', `Your ticket: <#${channel.id}>`)] });
     } catch (err: any) {
       await interaction.editReply({ embeds: [errorEmbed('Failed', err.message || 'Unknown error')] });
     }
   }
-
   if (action === 'ticket_claim') {
     await interaction.deferReply({ ephemeral: true });
     const member = await interaction.guild.members.fetch(interaction.user.id);
@@ -86,39 +83,34 @@ async function handleButton(interaction: ButtonInteraction): Promise<void> {
     await logAction(ticketId, interaction.user.id, 'claimed');
     await interaction.editReply({ embeds: [successEmbed('Claimed', 'You have claimed this ticket.')] });
     if (interaction.channel && 'send' in interaction.channel) {
-      await (interaction.channel as any).send({ embeds: [infoEmbed('Ticket Claimed', \`<@\${interaction.user.id}> has claimed this ticket.\`)] });
+      await (interaction.channel as any).send({ embeds: [infoEmbed('Ticket Claimed', `<@${interaction.user.id}> has claimed this ticket.`)] });
     }
   }
-
   if (action === 'ticket_close') {
     const ticketId = rest[0];
     const modal = new ModalBuilder()
-      .setCustomId(\`close_modal:\${ticketId}\`)
+      .setCustomId(`close_modal:${ticketId}`)
       .setTitle('Close Ticket')
       .addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(
         new TextInputBuilder().setCustomId('reason').setLabel('Reason').setStyle(TextInputStyle.Paragraph).setRequired(false)
       ));
     await interaction.showModal(modal);
   }
-
   if (action === 'ticket_tools') {
     await interaction.deferReply({ ephemeral: true });
     const member = await interaction.guild.members.fetch(interaction.user.id);
     if (!(await isStaff(member))) return await interaction.editReply({ embeds: [errorEmbed('No Permission', 'Only staff can use tools.')] });
-    
     const ticketId = rest[0];
     const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId(\`ticket_delete:\${ticketId}\`).setLabel('Delete Channel').setStyle(ButtonStyle.Danger),
-      new ButtonBuilder().setCustomId(\`ticket_transcript:\${ticketId}\`).setLabel('Get Transcript').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId(`ticket_delete:${ticketId}`).setLabel('Delete Channel').setStyle(ButtonStyle.Danger),
+      new ButtonBuilder().setCustomId(`ticket_transcript:${ticketId}`).setLabel('Get Transcript').setStyle(ButtonStyle.Secondary),
     );
     await interaction.editReply({ content: '🛠️ **Staff Tools**', components: [row] });
   }
-
   if (action === 'ticket_delete') {
     await interaction.deferReply({ ephemeral: true });
     const member = await interaction.guild.members.fetch(interaction.user.id);
     if (!(await isStaff(member))) return await interaction.editReply({ embeds: [errorEmbed('No Permission', 'Only staff can delete tickets.')] });
-    
     await interaction.editReply({ content: '⚠️ Deleting channel in 5 seconds...' });
     setTimeout(() => interaction.channel?.delete().catch(() => {}), 5000);
   }
@@ -134,25 +126,21 @@ async function handleModal(interaction: ModalSubmitInteraction): Promise<void> {
     for (const [id, comp] of interaction.fields.fields) formAnswers[id] = comp.value;
     try {
       const channel = await openTicket({ guild: interaction.guild!, member, categoryId, formAnswers });
-      await interaction.editReply({ embeds: [successEmbed('Ticket Created', \`Your ticket: <#\${channel.id}>\`)] });
+      await interaction.editReply({ embeds: [successEmbed('Ticket Created', `Your ticket: <#${channel.id}>`)] });
     } catch (err: any) {
       await interaction.editReply({ embeds: [errorEmbed('Failed', err.message || 'Unknown error')] });
     }
   }
-
   if (action === 'close_modal') {
     await interaction.deferReply({ ephemeral: true });
     const ticketId = rest[0];
     const reason = interaction.fields.getTextInputValue('reason') || undefined;
     const ticket = await getTicketById(ticketId);
     if (!ticket) return await interaction.editReply({ embeds: [errorEmbed('Error', 'Ticket not found.')] });
-
     await interaction.editReply({ embeds: [infoEmbed('Closing...', 'Processing transcript...')] });
     await processTicketClose(ticket, interaction.user.id, reason);
     await buildAndSendTranscript(ticket, interaction.channel as any);
-    
-    await (interaction.channel as any).send({ embeds: [infoEmbed('Ticket Closed', \`Closed by <@\${interaction.user.id}>\${reason ? \` — \${reason}\` : '.'}\`)] });
-    
+    await (interaction.channel as any).send({ embeds: [infoEmbed('Ticket Closed', `Closed by <@${interaction.user.id}>${reason ? ` — ${reason}` : '.'}`)] });
     const textChannel = interaction.channel as any;
     await textChannel.permissionOverwrites.edit(interaction.guild!.roles.everyone, { ViewChannel: false });
     await textChannel.permissionOverwrites.edit(ticket.opener_id, { ViewChannel: true, SendMessages: false });
