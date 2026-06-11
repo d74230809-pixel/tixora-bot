@@ -14,6 +14,14 @@ const commands = allCommands.map(c => c.data.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(token);
 
-console.log(`Registering ${commands.length} slash commands globally...`);
-await rest.put(Routes.applicationCommands(clientId), { body: commands });
-console.log('✅ Slash commands registered successfully!');
+async function register() {
+  try {
+    console.log(`Registering ${commands.length} slash commands globally...`);
+    await rest.put(Routes.applicationCommands(clientId), { body: commands });
+    console.log('✅ Slash commands registered successfully!');
+  } catch (error) {
+    console.error('Error registering commands:', error);
+  }
+}
+
+register();

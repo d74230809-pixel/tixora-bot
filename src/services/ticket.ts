@@ -3,6 +3,7 @@ import {
   ChannelType, EmbedBuilder, PermissionFlagsBits,
   type Guild as DiscordGuild, type GuildMember, type TextChannel,
 } from 'discord.js';
+import { createTicket, logAction, saveTranscript, closeTicket } from '../database/queries.js';
 
 export async function openTicket(options: {
   guild: DiscordGuild;
@@ -10,11 +11,10 @@ export async function openTicket(options: {
   categoryId?: string | null;
   formAnswers?: Record<string, string>;
 }): Promise<TextChannel> {
-  const { guild, member, formAnswers } = options;
+  const { guild, member, categoryId, formAnswers } = options;
   
-  // NO DATABASE - INSTANT CREATION
-  const channelName = `ticket-${member.user.username.toLowerCase().replace(/[^a-z0-9]/g, '')}-${Date.now().toString(36)}`;
-  
+  // 1. Create the channel first for immediate feedback
+  const channelName = `ticket-${member.user.username.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
   const channel = await guild.channels.create({
     name: channelName,
     type: ChannelType.GuildText,
@@ -24,22 +24,38 @@ export async function openTicket(options: {
     ],
   }) as TextChannel;
 
+  // 2. Persist to DB asynchronously to not block the Discord response
+  const ticketData = {
+    guild_id: guild.id,
+    channel_id: channel.id,
+    opener_id: member.id,
+    status: 'open',
+    category_id: categoryId || null,
+    form_answers_json: formAnswers ? JSON.stringify(formAnswers) : null,
+    opened_at: new Date().toISOString(),
+    last_activity_at: new Date().toISOString(),
+  };
+
+  const dbTicket = await createTicket(ticketData);
+  await logAction(dbTicket.id, member.id, 'ticket_opened');
+
+  // 3. Send the initial message
   const embed = new EmbedBuilder()
     .setAuthor({ name: member.user.tag, iconURL: member.user.displayAvatarURL() })
-    .setTitle(`Ticket: General Support`)
+    .setTitle(`Ticket: ${categoryId ? 'Support' : 'General Support'}`)
     .setDescription(`Hello ${member}, staff will be with you shortly. Use the buttons below to manage this ticket.`)
     .setColor(0x5865F2)
     .addFields(
       { name: '👤 Opener', value: `<@${member.id}>`, inline: true },
-      { name: '📂 Category', value: 'General', inline: true }
+      { name: '📂 Category', value: categoryId || 'General', inline: true }
     )
     .setTimestamp()
     .setFooter({ text: 'Tixora Support' });
 
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId(`ticket_close:none`).setLabel('Close').setStyle(ButtonStyle.Danger).setEmoji('🔒'),
-    new ButtonBuilder().setCustomId(`ticket_claim:none`).setLabel('Claim').setStyle(ButtonStyle.Primary).setEmoji('🙋'),
-    new ButtonBuilder().setCustomId(`ticket_tools:none`).setLabel('Tools').setStyle(ButtonStyle.Secondary).setEmoji('🛠️'),
+    new ButtonBuilder().setCustomId(`ticket_close:${dbTicket.id}`).setLabel('Close').setStyle(ButtonStyle.Danger).setEmoji('🔒'),
+    new ButtonBuilder().setCustomId(`ticket_claim:${dbTicket.id}`).setLabel('Claim').setStyle(ButtonStyle.Primary).setEmoji('🙋'),
+    new ButtonBuilder().setCustomId(`ticket_tools:${dbTicket.id}`).setLabel('Tools').setStyle(ButtonStyle.Secondary).setEmoji('🛠️'),
   );
 
   await channel.send({ content: `<@${member.id}>`, embeds: [embed], components: [row] });
@@ -56,9 +72,17 @@ export async function openTicket(options: {
 }
 
 export async function processTicketClose(ticket: any, closedBy: string, reason?: string): Promise<void> {
-  // Logic handled in interactionCreate.ts for No-DB mode
+  await closeTicket(ticket.id, reason);
+  await logAction(ticket.id, closedBy, 'ticket_closed', { reason });
 }
 
 export async function buildAndSendTranscript(ticket: any, channel: TextChannel): Promise<void> {
-  // Transcript disabled in No-DB mode
+  // Fetch messages and save to DB
+  const messages = await channel.messages.fetch({ limit: 100 });
+  const transcriptData = messages.map(m => ({
+    author: m.author.tag,
+    content: m.content,
+    timestamp: m.createdAt.toISOString()
+  }));
+  await saveTranscript(ticket.id, transcriptData);
 }

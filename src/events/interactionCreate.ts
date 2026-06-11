@@ -5,7 +5,8 @@ import {
   ButtonBuilder, ButtonStyle,
 } from 'discord.js';
 import type { SlashCommand } from '../bot.js';
-import { openTicket } from '../services/ticket.js';
+import { openTicket, processTicketClose, buildAndSendTranscript } from '../services/ticket.js';
+import { claimTicket, getTicketById, logAction, getTicketByChannel } from '../database/queries.js';
 import { successEmbed, errorEmbed, infoEmbed } from '../utils/embed.js';
 
 export default async function onInteraction(interaction: Interaction, commands: Map<string, SlashCommand>): Promise<void> {
@@ -26,34 +27,55 @@ async function handleSlash(interaction: ChatInputCommandInteraction, commands: M
 }
 
 async function handleButton(interaction: ButtonInteraction): Promise<void> {
-  const [action] = interaction.customId.split(':');
+  const [action, id] = interaction.customId.split(':');
   if (!interaction.guild) return;
 
   if (action === 'panel_open' || action === 'open_ticket') {
     await interaction.deferReply({ ephemeral: true });
     const member = await interaction.guild.members.fetch(interaction.user.id);
     try {
-      const channel = await openTicket({ guild: interaction.guild, member });
+      const channel = await openTicket({ guild: interaction.guild, member, categoryId: id !== 'none' ? id : null });
       await interaction.editReply({ embeds: [successEmbed('Ticket Created', `Your ticket: <#${channel.id}>`)] });
     } catch (err: any) {
+      console.error('[Ticket] Error opening ticket:', err);
       await interaction.editReply({ embeds: [errorEmbed('Failed', err.message || 'Unknown error')] });
     }
+    return;
+  }
+
+  // For other actions, we need the ticket from DB
+  const ticket = id && id !== 'none' ? await getTicketById(id) : await getTicketByChannel(interaction.channelId);
+  if (!ticket) {
+    if (action.startsWith('ticket_')) {
+      await interaction.reply({ embeds: [errorEmbed('Error', 'Ticket not found in database.')], ephemeral: true });
+    }
+    return;
   }
 
   if (action === 'ticket_claim') {
+    await claimTicket(ticket.id, interaction.user.id);
+    await logAction(ticket.id, interaction.user.id, 'ticket_claimed');
     await interaction.reply({ embeds: [infoEmbed('Ticket Claimed', `<@${interaction.user.id}> has claimed this ticket.`)] });
   }
 
   if (action === 'ticket_close') {
-    await interaction.reply({ embeds: [infoEmbed('Closing...', 'This ticket is being closed.')] });
-    const textChannel = interaction.channel as any;
-    await textChannel.send({ embeds: [infoEmbed('Ticket Closed', `Closed by <@${interaction.user.id}>. This channel will be deleted in 10 seconds.`)] });
-    setTimeout(() => textChannel.delete().catch(() => {}), 10000);
+    await interaction.deferReply();
+    try {
+      await processTicketClose(ticket, interaction.user.id);
+      await interaction.editReply({ embeds: [infoEmbed('Closing...', 'This ticket is being closed and archived.')] });
+      
+      // Async transcript and cleanup
+      buildAndSendTranscript(ticket, interaction.channel as any).catch(console.error);
+      
+      setTimeout(() => interaction.channel?.delete().catch(() => {}), 5000);
+    } catch (err: any) {
+      await interaction.editReply({ embeds: [errorEmbed('Error', err.message)] });
+    }
   }
 
   if (action === 'ticket_tools') {
     const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId(`ticket_delete:none`).setLabel('Delete Channel').setStyle(ButtonStyle.Danger),
+      new ButtonBuilder().setCustomId(`ticket_delete:${ticket.id}`).setLabel('Delete Channel').setStyle(ButtonStyle.Danger),
     );
     await interaction.reply({ content: '🛠️ **Staff Tools**', components: [row], ephemeral: true });
   }
@@ -65,6 +87,6 @@ async function handleButton(interaction: ButtonInteraction): Promise<void> {
 }
 
 async function handleModal(interaction: ModalSubmitInteraction): Promise<void> {
-  // Modal support disabled in No-DB mode for maximum simplicity
-  await interaction.reply({ content: 'Modals are currently disabled in No-DB mode.', ephemeral: true });
+  // Restore modal handling if needed, or keep simple for now
+  await interaction.reply({ content: 'Modals are being re-enabled.', ephemeral: true });
 }

@@ -12,7 +12,7 @@ export default async function onMessage(
   if (!message.guild) return;
 
   // Update last activity for open tickets
-  if (message.channel.isTextBased() && 'name' in message.channel && message.channel.name.startsWith('ticket-')) {
+  if (message.channel.isTextBased() && 'name' in message.channel && message.channel.name?.startsWith('ticket-')) {
     const ticket = await getTicketByChannel(message.channel.id);
     if (ticket && ticket.status === 'open') {
       await updateLastActivity(ticket.id).catch(() => null);

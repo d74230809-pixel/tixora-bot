@@ -27,7 +27,7 @@ export default {
     const guildId = interaction.guildId!;
 
     if (subcommand === 'list') {
-      const { rows } = await query('canned_responses', 'select', { filter: { guild_id: guildId } });
+      const { rows } = await query('SELECT * FROM canned_responses WHERE guild_id = $1', [guildId]);
       
       if (rows.length === 0) {
         return interaction.reply({ content: 'No canned responses found.', ephemeral: true });
@@ -45,9 +45,10 @@ export default {
       const name = interaction.options.getString('name')!;
       const content = interaction.options.getString('content')!;
 
-      await query('canned_responses', 'insert', { 
-        data: { guild_id: guildId, name, content } 
-      });
+      await query(
+        'INSERT INTO canned_responses (guild_id, name, content) VALUES ($1, $2, $3) ON CONFLICT (guild_id, name) DO UPDATE SET content = EXCLUDED.content',
+        [guildId, name, content]
+      );
 
       return interaction.reply({ content: `Added canned response: **${name}**`, ephemeral: true });
     }
@@ -55,9 +56,7 @@ export default {
     if (subcommand === 'delete') {
       const name = interaction.options.getString('name')!;
 
-      await query('canned_responses', 'delete', { 
-        filter: { guild_id: guildId, name } 
-      });
+      await query('DELETE FROM canned_responses WHERE guild_id = $1 AND name = $2', [guildId, name]);
 
       return interaction.reply({ content: `Deleted canned response: **${name}**`, ephemeral: true });
     }
