@@ -58,3 +58,9 @@ npm run register
 
 ## How Panels Work
 Configure panels from the web dashboard. Each panel posts a message with buttons to a channel. When a user clicks a button, Tixora opens a ticket channel and logs everything to the database.
+
+## Recent Updates (Jun 10, 2026)
+- Fixed 'TypeError: fetch failed' bug in ticket creation.
+- Optimized database connection and query handling for lower latency.
+- Implemented Pings Feature with detailed configuration (roles, opener, auto-delete).
+- Enhanced Admin Panel with new ping settings in Categories.
