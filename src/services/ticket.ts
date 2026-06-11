@@ -23,12 +23,13 @@ export async function openTicket(options: {
 }): Promise<TextChannel> {
   const { guild, member, categoryId, formAnswers } = options;
 
+  // 1. Fetch config first to fail fast
   const category = categoryId ? await getCategoryById(categoryId) : null;
   const guildConfig = await getGuild(guild.id);
 
-  // 1. Enforce max_open_per_user if set
+  // 2. Enforce max_open_per_user
   if (category?.max_open_per_user) {
-    const { data: openTickets } = await db
+    const { data: openTickets, error: countErr } = await db
       .from('tickets')
       .select('id')
       .eq('guild_id', guild.id)
@@ -36,18 +37,18 @@ export async function openTicket(options: {
       .eq('category_id', categoryId)
       .eq('status', 'open');
     
+    if (countErr) console.error('[openTicket] Error checking open tickets:', countErr);
     if (openTickets && openTickets.length >= category.max_open_per_user) {
-      throw new Error(`You already have ${openTickets.length} open ticket(s) in this category. Please close them before opening a new one.`);
+      throw new Error(`You already have ${openTickets.length} open ticket(s) in this category.`);
     }
   }
 
-  // Find or create ticket category channel
+  // 3. Prepare channel settings
   let parentId: string | undefined;
   if (category?.target_channel_id) {
     parentId = category.target_channel_id;
   }
 
-  // 2. Custom Naming Scheme
   let channelName = `ticket-${member.user.username.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
   if (category?.naming_scheme) {
     channelName = category.naming_scheme
@@ -58,55 +59,71 @@ export async function openTicket(options: {
     channelName += `-${Date.now().toString(36)}`;
   }
 
-  const channel = await guild.channels.create({
-    name: channelName,
-    type: ChannelType.GuildText,
-    parent: parentId,
-    permissionOverwrites: [
-      {
-        id: guild.roles.everyone.id,
-        deny: [PermissionFlagsBits.ViewChannel],
-      },
-      {
-        id: member.id,
-        allow: [
-          PermissionFlagsBits.ViewChannel,
-          PermissionFlagsBits.SendMessages,
-          PermissionFlagsBits.AttachFiles,
-          PermissionFlagsBits.ReadMessageHistory,
-        ],
-      },
-    ],
-  }) as TextChannel;
-
-  // Create ticket record in DB (with form answers if present)
+  // 4. Create DB record FIRST so we have a ticket ID and know the DB is working
+  // We use a placeholder channel_id that we'll update in a second
   const ticket = await createTicket({
     guild_id: guild.id,
-    channel_id: channel.id,
+    channel_id: 'pending', 
     opener_id: member.id,
     category_id: categoryId ?? null,
     priority_id: category?.default_priority_id ?? null,
     form_answers_json: formAnswers ?? null,
   });
 
+  let channel: TextChannel;
+  try {
+    // 5. Create Discord Channel
+    channel = await guild.channels.create({
+      name: channelName,
+      type: ChannelType.GuildText,
+      parent: parentId,
+      permissionOverwrites: [
+        {
+          id: guild.roles.everyone.id,
+          deny: [PermissionFlagsBits.ViewChannel],
+        },
+        {
+          id: member.id,
+          allow: [
+            PermissionFlagsBits.ViewChannel,
+            PermissionFlagsBits.SendMessages,
+            PermissionFlagsBits.AttachFiles,
+            PermissionFlagsBits.ReadMessageHistory,
+          ],
+        },
+      ],
+    }) as TextChannel;
+
+    // 6. Update DB with real channel ID
+    await db.from('tickets').update({ channel_id: channel.id }).eq('id', ticket.id);
+  } catch (err) {
+    // If channel creation fails, delete the DB record so we don't have a broken ticket
+    await db.from('tickets').delete().eq('id', ticket.id);
+    throw err;
+  }
+
   await logAction(ticket.id, member.id, 'opened', { category: category?.name ?? 'General' });
 
-  // Add staff roles to channel permissions
+  // 7. Add staff roles
   if (category?.staff_roles_json?.length) {
     for (const roleId of category.staff_roles_json) {
-      await channel.permissionOverwrites.create(roleId, {
-        ViewChannel: true,
-        SendMessages: true,
-        ReadMessageHistory: true,
-      });
+      try {
+        await channel.permissionOverwrites.create(roleId, {
+          ViewChannel: true,
+          SendMessages: true,
+          ReadMessageHistory: true,
+        });
+      } catch (e) { console.error(`[openTicket] Failed to add staff role ${roleId}:`, e); }
     }
   }
 
-  // Build opening embed
+  // 8. Build and Send Welcome Embed
   const priorityData = ticket.priority_id ? await getPriorityById(ticket.priority_id) : null;
   const embed = ticketEmbed({
     title: `Ticket #${channel.name}`,
-    description: `Hello ${member}, a staff member will assist you shortly.\n\nPlease describe your issue in detail.`,
+    description: category?.welcome_message 
+      ? category.welcome_message.replace('{user}', `<@${member.id}>`)
+      : `Hello ${member}, a staff member will assist you shortly.\n\nPlease describe your issue in detail.`,
     color: priorityData ? hexToDecimal(priorityData.color_hex) : 0x5865F2,
     fields: [
       { name: 'Opened by', value: `<@${member.id}>`, inline: true },
@@ -116,17 +133,12 @@ export async function openTicket(options: {
     footer: 'Powered by Tixora',
   });
 
-  // 3. Custom Welcome Message
-  if (category?.welcome_message) {
-    embed.setDescription(category.welcome_message.replace('{user}', `<@${member.id}>`));
-  }
-
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId(`ticket_close:${ticket.id}`).setLabel('Close Ticket').setStyle(ButtonStyle.Danger).setEmoji('🔒'),
     new ButtonBuilder().setCustomId(`ticket_claim:${ticket.id}`).setLabel('Claim').setStyle(ButtonStyle.Primary).setEmoji('🙋'),
   );
 
-  // ── Pings Feature ──────────────────────────────────────────────────────────
+  // 9. Handle Pings
   let pingContent = '';
   const pingRoles = (category as any)?.ping_roles_json || [];
   const pingOpener = (category as any)?.ping_opener !== false;
@@ -147,15 +159,12 @@ export async function openTicket(options: {
     setTimeout(async () => {
       try {
         await mainMessage.edit({ content: '' });
-      } catch (err) {
-        console.error('[Pings] Failed to delete ping content:', err);
-      }
+      } catch (err) { /* ignore */ }
     }, 5000);
   }
 
-  // If form answers provided, send them as a follow-up embed in the ticket
+  // 10. Form Responses
   if (formAnswers && Object.keys(formAnswers).length > 0) {
-    // Get form question labels for display
     let questionLabels: Record<string, string> = {};
     try {
       const formId = category?.form_id;
@@ -172,7 +181,6 @@ export async function openTicket(options: {
     const answersEmbed = new EmbedBuilder()
       .setColor(0x5865F2)
       .setTitle('📋 Form Responses')
-      .setDescription('The user submitted the following information:')
       .addFields(
         Object.entries(formAnswers)
           .filter(([, v]) => v.trim())
