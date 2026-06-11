@@ -15,14 +15,22 @@ const pool = new pg.Pool({
 
 export const query = async (text: string, params?: any[]) => {
   const start = Date.now();
-  const client = await pool.connect();
   try {
-    const res = await client.query(text, params);
-    const duration = Date.now() - start;
-    if (duration > 1000) console.warn(`[DB] Slow query (${duration}ms): ${text}`);
-    return res;
-  } finally {
-    client.release();
+    const client = await pool.connect();
+    try {
+      const res = await client.query(text, params);
+      const duration = Date.now() - start;
+      if (duration > 1000) console.warn(`[DB] Slow query (${duration}ms): ${text}`);
+      return res;
+    } finally {
+      client.release();
+    }
+  } catch (err: any) {
+    console.error(`[DB] Query Error: ${err.message}`);
+    if (err.code === 'ENOTFOUND') {
+      console.error(`[DB] Critical: Host ${err.hostname} not found. Please check your connection string.`);
+    }
+    throw err;
   }
 };
 
