@@ -116,9 +116,12 @@ async function handleButton(interaction: ButtonInteraction): Promise<void> {
     try {
       const channel = await openTicket({ guild: interaction.guild, member, categoryId });
       await interaction.editReply({ embeds: [successEmbed('Ticket Created', `Your ticket has been created: <#${channel.id}>`)] });
-    } catch (err) {
+    } catch (err: any) {
       console.error('[Button:panel_open] Error opening ticket:', err);
-      await interaction.editReply({ embeds: [errorEmbed('Error', err instanceof Error ? err.message : 'Failed to create ticket.')] });
+      const errorMsg = err.message || 'Unknown error';
+      await interaction.editReply({ 
+        embeds: [errorEmbed('Ticket Creation Failed', `**Reason:** ${errorMsg}\n\n*If this persists, please contact the bot owner.*`)] 
+      });
     }
     return;
   }

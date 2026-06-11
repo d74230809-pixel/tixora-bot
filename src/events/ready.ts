@@ -92,10 +92,13 @@ async function syncGuildInfo(client: Client): Promise<void> {
     if (error) console.error('[Tixora] Failed to sync guild batch:', error.message);
     // Update name/icon without overwriting premium status
     for (const g of batch) {
-      await db.from('guilds')
-        .update({ name: g.name, icon: g.icon, member_count: g.member_count, owner_id: g.owner_id })
-        .eq('guild_id', g.guild_id)
-        .catch(() => {}); // ignore individual errors
+      try {
+        await db.from('guilds')
+          .update({ name: g.name, icon: g.icon, member_count: g.member_count, owner_id: g.owner_id })
+          .eq('guild_id', g.guild_id);
+      } catch (err) {
+        // ignore individual errors
+      }
     }
   }
 
