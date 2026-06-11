@@ -1,45 +1,41 @@
-import pg from 'pg';
 import { createClient } from '@supabase/supabase-js';
 import ws from 'ws';
 
-// We're using the direct IPv4 address to bypass DNS and IPv6 issues entirely
-// Resolved db.kbhhuectbfyprebpvimc.supabase.co to its IPv4
-const DIRECT_IPV4 = '15.237.135.103'; 
+const WEB_API_URL = process.env.WEB_API_URL || 'https://tixora.app/api/trpc';
+const BOT_API_KEY = process.env.BOT_API_KEY || 'tixora_internal_key_2026';
 
-const pool = new pg.Pool({
-  // Use the direct IP instead of the hostname
-  host: DIRECT_IPV4,
-  port: 5432,
-  user: 'postgres',
-  password: 'FYuQoNUZ3pJXZG4p',
-  database: 'postgres',
-  max: 20,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 10000,
-  ssl: { rejectUnauthorized: false }
-});
-
-pool.on('error', (err) => {
-  console.error('[Postgres] Unexpected error on idle client:', err.message);
-});
-
-export const query = async (text: string, params?: any[]) => {
+export const query = async (table: string, action: 'select' | 'insert' | 'update' | 'delete', options: any = {}) => {
   const start = Date.now();
-  let client;
   try {
-    client = await pool.connect();
-    const res = await client.query(text, params);
+    const response = await fetch(`${WEB_API_URL}/internal.query`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-bot-key': BOT_API_KEY
+      },
+      body: JSON.stringify({
+        table,
+        action,
+        ...options
+      })
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.message || 'API Bridge Error');
+    }
+
+    const result = await response.json();
     const duration = Date.now() - start;
-    if (duration > 1000) console.warn(`[Postgres] Slow query (${duration}ms): ${text.slice(0, 100)}`);
-    return res;
+    if (duration > 1000) console.warn(`[API Bridge] Slow request (${duration}ms): ${table}.${action}`);
+    return { rows: Array.isArray(result.result.data) ? result.result.data : [result.result.data], rowCount: Array.isArray(result.result.data) ? result.result.data.length : 1 };
   } catch (err: any) {
-    console.error('[Postgres] Query Error:', err.message);
+    console.error('[API Bridge] Error:', err.message);
     throw err;
-  } finally {
-    if (client) client.release();
   }
 };
 
+// Still keep Supabase for Realtime if needed, but primary data goes through Bridge
 const supabaseUrl = process.env.SUPABASE_URL!;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 export const db = createClient(supabaseUrl, supabaseKey, {
