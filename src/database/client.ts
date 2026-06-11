@@ -2,24 +2,36 @@ import pg from 'pg';
 import { createClient } from '@supabase/supabase-js';
 import ws from 'ws';
 
-// Direct PostgreSQL connection for ultra-low latency
+// Optimized pool settings for Railway
 const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL || 'postgresql://postgres:FYuQoNUZ3pJXZG4p@db.kbhhuectbfyprebpvimc.supabase.co:5432/postgres',
-  max: 20,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 2000,
+  max: 10,
+  idleTimeoutMillis: 10000,
+  connectionTimeoutMillis: 5000,
+  ssl: { rejectUnauthorized: false }
 });
 
-export const query = (text: string, params?: any[]) => pool.query(text, params);
+pool.on('error', (err) => {
+  console.error('[Postgres] Unexpected error on idle client', err);
+});
 
-// Keep Supabase client only for specific things if needed (like storage/auth)
+export const query = async (text: string, params?: any[]) => {
+  const start = Date.now();
+  try {
+    const res = await pool.query(text, params);
+    const duration = Date.now() - start;
+    if (duration > 1000) console.warn(\`[Postgres] Slow query (\${duration}ms): \${text}\`);
+    return res;
+  } catch (err) {
+    console.error('[Postgres] Query Error:', err);
+    throw err;
+  }
+};
+
 const supabaseUrl = process.env.SUPABASE_URL!;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-
 export const db = createClient(supabaseUrl, supabaseKey, {
   auth: { persistSession: false },
   realtime: { transport: ws },
 });
-
-// Legacy compatibility wrapper to avoid breaking all files at once
 export const supabase = db;
