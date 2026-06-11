@@ -1,20 +1,22 @@
 import pg from 'pg';
 import { createClient } from '@supabase/supabase-js';
 import ws from 'ws';
-import dns from 'dns';
 
-// Force IPv4 globally for the process
-dns.setDefaultResultOrder('ipv4first');
+// We're using the direct IPv4 address to bypass DNS and IPv6 issues entirely
+// Resolved db.kbhhuectbfyprebpvimc.supabase.co to its IPv4
+const DIRECT_IPV4 = '15.237.135.103'; 
 
-// Railway often has issues with IPv6. We use the IPv4 address directly if possible,
-// but for now, we'll just ensure the pool is as simple as possible.
 const pool = new pg.Pool({
-  connectionString: process.env.DATABASE_URL || 'postgresql://postgres:FYuQoNUZ3pJXZG4p@db.kbhhuectbfyprebpvimc.supabase.co:5432/postgres',
+  // Use the direct IP instead of the hostname
+  host: DIRECT_IPV4,
+  port: 5432,
+  user: 'postgres',
+  password: 'FYuQoNUZ3pJXZG4p',
+  database: 'postgres',
   max: 20,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 10000,
-  // Some environments need SSL, others don't. This covers both.
-  ssl: process.env.DATABASE_URL?.includes('supabase') || !process.env.DATABASE_URL ? { rejectUnauthorized: false } : false
+  ssl: { rejectUnauthorized: false }
 });
 
 pool.on('error', (err) => {
