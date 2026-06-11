@@ -7,22 +7,19 @@ const BOT_API_KEY = process.env.BOT_API_KEY || 'tixora_internal_key_2026';
 export const query = async (table: string, action: 'select' | 'insert' | 'update' | 'delete', options: any = {}) => {
   const start = Date.now();
   try {
-    // tRPC expects the input as a URL-encoded JSON string in a query parameter for mutations/queries sometimes,
-    // but for mutations via POST, it expects a specific JSON structure.
-    const response = await fetch(`${WEB_API_URL}/internal.query`, {
+    // The error "expected object, received undefined" means tRPC is not finding the input.
+    // We need to send it as a JSON body that matches the exact expected structure.
+    const response = await fetch(`${WEB_API_URL}/internal.query?batch=1`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'x-bot-key': BOT_API_KEY
       },
       body: JSON.stringify({
-        // tRPC POST format: { "0": { "json": { ...input } } }
         "0": {
-          "json": {
-            table,
-            action,
-            ...options
-          }
+          table,
+          action,
+          ...options
         }
       })
     });
@@ -35,10 +32,10 @@ export const query = async (table: string, action: 'select' | 'insert' | 'update
 
     const result = await response.json();
     
-    // tRPC result format: [{ "result": { "data": { "json": ... } } }]
-    const data = result[0]?.result?.data?.json;
+    // tRPC result for a mutation: [{ "result": { "data": ... } }]
+    const data = result[0]?.result?.data;
     
-    if (!data && action !== 'delete') {
+    if (data === undefined && action !== 'delete') {
       console.error('[API Bridge] Invalid response format:', JSON.stringify(result));
       throw new Error('Invalid API Bridge response');
     }
@@ -47,7 +44,7 @@ export const query = async (table: string, action: 'select' | 'insert' | 'update
     if (duration > 1000) console.warn(`[API Bridge] Slow request (${duration}ms): ${table}.${action}`);
     
     return { 
-      rows: Array.isArray(data) ? data : [data], 
+      rows: Array.isArray(data) ? data : (data ? [data] : []), 
       rowCount: Array.isArray(data) ? data.length : (data ? 1 : 0) 
     };
   } catch (err: any) {
