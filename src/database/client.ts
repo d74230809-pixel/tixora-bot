@@ -4,7 +4,7 @@ import ws from 'ws';
 
 // Direct connection to Supabase DB
 const pool = new pg.Pool({
-  connectionString: 'postgresql://postgres:FYuQoNUZ3pJXZG4p@aws-0-us-east-1.pooler.supabase.com:6543/postgres?pgbouncer=true',
+  connectionString: 'postgresql://postgres:FYuQoNUZ3pJXZG4p@aws-0-us-east-1.pooler.supabase.com:5432/postgres?pgbouncer=true',
   ssl: {
     rejectUnauthorized: false
   },
