@@ -30,7 +30,7 @@ export async function openTicket(options: {
     channel_id: channel.id,
     opener_id: member.id,
     status: 'open',
-    category_id: categoryId || null,
+    category_id: (categoryId && categoryId !== 'null' && categoryId !== 'none') ? categoryId : null,
     form_answers_json: formAnswers ? JSON.stringify(formAnswers) : null,
     opened_at: new Date().toISOString(),
     last_activity_at: new Date().toISOString(),

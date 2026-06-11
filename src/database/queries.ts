@@ -124,8 +124,8 @@ export async function getOpenTicketsOlderThan(guildId: string, hours: number): P
 
 export async function getAutoCloseConfigs(guildId?: string): Promise<any[]> {
   const sql = guildId 
-    ? 'SELECT guild_id, auto_close_hours FROM guilds WHERE auto_close_enabled = TRUE AND guild_id = $1'
-    : 'SELECT guild_id, auto_close_hours FROM guilds WHERE auto_close_enabled = TRUE';
+    ? 'SELECT guild_id, auto_close_hours as timeout_hours, NULL as category_id FROM guilds WHERE auto_close_enabled = TRUE AND guild_id = $1'
+    : 'SELECT guild_id, auto_close_hours as timeout_hours, NULL as category_id FROM guilds WHERE auto_close_enabled = TRUE';
   const params = guildId ? [guildId] : [];
   const res = await query(sql, params);
   return res.rows;
